@@ -1,23 +1,30 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ContractData, ContractStance, ReviewStrictness, RiskPoint, RiskLevel, ContractSummary, ReviewSession } from '../types';
+
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { ContractData, ContractStance, ReviewStrictness, RiskPoint, RiskLevel, ContractSummary, ReviewSession, PrivacySessionData, MaskingMap } from '../types';
 import { analyzeContractRisks, generateContractSummary } from '../services/geminiService';
-import { Check, X, ArrowRight, Download, Loader2, Sparkles, Wand2, ChevronLeft, ChevronRight, AlertTriangle, Shield, PieChart } from 'lucide-react';
+import { Check, X, ArrowRight, Download, Loader2, Sparkles, Wand2, ChevronLeft, ChevronRight, AlertTriangle, Shield, PieChart, Eye, EyeOff, Lock } from 'lucide-react';
 import * as Diff from 'diff';
 
 interface ReviewInterfaceProps {
   contract: ContractData;
   initialSession?: ReviewSession | null;
+  privacyData?: PrivacySessionData | null;
   onSaveSession: (session: ReviewSession) => void;
   onBack: () => void;
 }
 
-export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, initialSession, onSaveSession, onBack }) => {
-  const [currentText, setCurrentText] = useState(contract.content);
+export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, initialSession, privacyData, onSaveSession, onBack }) => {
+  // Use masked content if available, otherwise original
+  const [currentText, setCurrentText] = useState(privacyData?.maskedContent || contract.content);
   const [summary, setSummary] = useState<ContractSummary | null>(null);
   const [risks, setRisks] = useState<RiskPoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState<string>('');
   
+  // Privacy State
+  const [isMaskedView, setIsMaskedView] = useState(!!privacyData);
+  const maskMap = useMemo(() => privacyData?.maskMap || {}, [privacyData]);
+
   // Settings
   const [stance, setStance] = useState<ContractStance>(ContractStance.NEUTRAL);
   const [strictness, setStrictness] = useState<ReviewStrictness>(ReviewStrictness.BALANCED);
@@ -30,21 +37,44 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
 
   // Initialize from props
   useEffect(() => {
-    setCurrentText(contract.content);
+    // If we have a previous session, restore it
     if (initialSession) {
+        // If the session had privacy data, use the masked text from it
+        const sessionText = initialSession.privacyData?.maskedContent || initialSession.contract.content;
+        setCurrentText(sessionText);
         setRisks(initialSession.risks);
         setSummary(initialSession.summary);
+        if (initialSession.privacyData) {
+            setIsMaskedView(true);
+        }
     } else {
+        // New Session
+        setCurrentText(privacyData?.maskedContent || contract.content);
         setRisks([]);
         setSummary(null);
         setSelectedRiskId(null);
+        
         const fetchSummary = async () => {
-          const sum = await generateContractSummary(contract.content);
+          // Summary is generated on the potentially masked text to simulate privacy
+          const sum = await generateContractSummary(privacyData?.maskedContent || contract.content);
           setSummary(sum);
         };
         fetchSummary();
     }
-  }, [contract.content, initialSession]);
+  }, [contract, initialSession, privacyData]);
+
+  // Helper to unmask text
+  const unmaskText = (text: string): string => {
+      if (!text) return '';
+      let result = text;
+      // Sort keys by length desc to avoid partial replacement issues
+      const placeholders = Object.keys(maskMap).sort((a, b) => b.length - a.length);
+      for (const placeholder of placeholders) {
+          // Global replacement
+          result = result.split(placeholder).join(maskMap[placeholder]);
+      }
+      return result;
+  };
 
   const handleAnalyze = async () => {
     setLoading(true);
@@ -52,6 +82,7 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
     const rulesContext = "Standard commercial contract rules, focus on liability caps and payment terms."; 
     
     try {
+      // Analyze the CURRENT text (which is masked if privacy mode is on)
       const identifiedRisks = await analyzeContractRisks(currentText, stance, strictness, rulesContext);
       setRisks(identifiedRisks);
       setLoadingStep('');
@@ -59,10 +90,11 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
       // Auto Save
       onSaveSession({
           id: Date.now().toString(),
-          contract: { ...contract, content: currentText },
+          contract: { ...contract, content: currentText }, // Saving the working copy
           summary,
           risks: identifiedRisks,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          privacyData: privacyData || undefined
       });
 
     } catch (e) {
@@ -74,17 +106,13 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
   };
 
   const handleAcceptRisk = (risk: RiskPoint) => {
+    // We update the underlying text (which might be masked)
     const newText = currentText.replace(risk.originalText, risk.suggestedText);
     setCurrentText(newText);
     setRisks(prev => prev.map(r => r.id === risk.id ? { ...r, isAddressed: true } : r));
-    // Automatically move to next risk or close
+    
     const remaining = risks.filter(r => !r.isAddressed && r.id !== risk.id);
-    if (remaining.length > 0) {
-        // Optional: Auto advance
-        // const next = remaining[0];
-        // setSelectedRiskId(next.id);
-        setSelectedRiskId(null); // Return to dashboard
-    } else {
+    if (remaining.length === 0) {
         setSelectedRiskId(null);
     }
   };
@@ -95,8 +123,10 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
   };
 
   const downloadContract = () => {
+    // Always unmask before download
+    const finalContent = unmaskText(currentText);
     const element = document.createElement("a");
-    const file = new Blob([currentText], {type: 'application/msword'});
+    const file = new Blob([finalContent], {type: 'application/msword'});
     element.href = URL.createObjectURL(file);
     element.download = `Reviewed_${contract.fileName}.doc`;
     document.body.appendChild(element);
@@ -105,7 +135,6 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
 
   const handleSelectRisk = (riskId: string) => {
     setSelectedRiskId(riskId);
-    // Scroll document to ensure context is visible
     setTimeout(() => {
         const el = highlightRefs.current[riskId];
         if (el) {
@@ -127,6 +156,8 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
   };
 
   const renderDocumentContent = () => {
+    // Current text is masked if we started with privacyData.
+    // We split based on the risk.originalText (which matches the masked text).
     let parts: { text: string; riskId?: string; level?: RiskLevel }[] = [{ text: currentText }];
     const activeRisks = risks.filter(r => !r.isAddressed);
     
@@ -154,8 +185,11 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
 
     return (
       <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-gray-800 pb-[80vh] scroll-mt-32">
-        {parts.map((part, idx) => (
-          part.riskId ? (
+        {parts.map((part, idx) => {
+           // If user wants "Original View", we visually unmask the content segment
+           const displayText = (!isMaskedView && privacyData) ? unmaskText(part.text) : part.text;
+           
+           return part.riskId ? (
             <span 
               key={idx} 
               id={`highlight-${part.riskId}`}
@@ -168,12 +202,12 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                 'bg-yellow-50 border-yellow-500 hover:bg-yellow-100'
               }`}
             >
-              {part.text}
+              {displayText}
             </span>
           ) : (
-            <span key={idx}>{part.text}</span>
+            <span key={idx}>{displayText}</span>
           )
-        ))}
+        })}
       </div>
     );
   };
@@ -190,7 +224,15 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
             <ArrowRight className="rotate-180 w-5 h-5" />
           </button>
           <div>
-            <h2 className="font-semibold text-lg text-gray-800">{contract.fileName}</h2>
+            <h2 className="font-semibold text-lg text-gray-800 flex items-center gap-2">
+                {contract.fileName}
+                {privacyData && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100 flex items-center gap-1">
+                        <Shield className="w-3 h-3" />
+                        已脱敏
+                    </span>
+                )}
+            </h2>
             <div className="flex items-center gap-2 text-xs text-gray-500">
               {summary ? (
                 <>
@@ -205,12 +247,28 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {privacyData && (
+            <div className="flex items-center bg-gray-100 rounded-lg p-1 mr-2">
+                <button 
+                    onClick={() => setIsMaskedView(true)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1 transition-all ${isMaskedView ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                    <EyeOff className="w-3.5 h-3.5" /> 脱敏模式
+                </button>
+                <button 
+                    onClick={() => setIsMaskedView(false)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1 transition-all ${!isMaskedView ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                    <Eye className="w-3.5 h-3.5" /> 原文模式
+                </button>
+            </div>
+          )}
           <button 
             onClick={downloadContract}
             className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"
           >
             <Download className="w-4 h-4" />
-            下载合同
+            {privacyData ? '复敏下载' : '下载合同'}
           </button>
         </div>
       </div>
@@ -239,6 +297,14 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                   <p className="text-gray-500">
                     配置您的审查立场，AI 将基于内置的法律知识库为您排查风险。
                   </p>
+                  {privacyData && (
+                      <div className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-lg flex gap-3">
+                          <Lock className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
+                          <p className="text-xs text-blue-700 leading-relaxed">
+                              当前处于隐私保护模式。AI 将仅能看到脱敏后的文本 (如 [PARTY_A])，不会接触您的真实敏感数据。
+                          </p>
+                      </div>
+                  )}
                 </div>
 
                 <div className="space-y-5 bg-slate-50 p-6 rounded-xl border border-slate-100">
@@ -387,11 +453,11 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
         </div>
       </div>
 
-      {/* 3. Risk Detail Drawer (Fixed Overlay - The "Popup") */}
+      {/* 3. Risk Detail Drawer (Fixed Overlay) */}
       {selectedRisk && (
         <div className="fixed top-0 right-0 bottom-0 w-[450px] bg-white shadow-[0_0_50px_-12px_rgba(0,0,0,0.25)] border-l border-gray-200 z-[60] flex flex-col animate-in slide-in-from-right duration-300">
             {/* Detail Header */}
-            <div className="p-4 pt-6 border-b flex items-center justify-between bg-slate-50"> {/* Increased top padding for window touch feel */}
+            <div className="p-4 pt-6 border-b flex items-center justify-between bg-slate-50">
                 <button onClick={() => setSelectedRiskId(null)} className="text-gray-500 hover:text-gray-800 flex items-center gap-1 text-sm font-medium">
                     <ChevronLeft className="w-4 h-4" /> 返回概览
                 </button>
@@ -434,7 +500,10 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                 </div>
                 
                 <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-8 shadow-inner">
-                    <DiffViewer oldValue={selectedRisk.originalText} newValue={selectedRisk.suggestedText} />
+                    <DiffViewer 
+                        oldValue={(!isMaskedView && privacyData) ? unmaskText(selectedRisk.originalText) : selectedRisk.originalText} 
+                        newValue={(!isMaskedView && privacyData) ? unmaskText(selectedRisk.suggestedText) : selectedRisk.suggestedText} 
+                    />
                 </div>
             </div>
 

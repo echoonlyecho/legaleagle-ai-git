@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
 import { UploadCloud, FileText, Settings, ShieldCheck, PenTool, Layout, Loader2, History, Clock } from 'lucide-react';
 import { ReviewInterface } from './components/ReviewInterface';
 import { KnowledgeBase } from './components/KnowledgeBase';
 import { ContractDrafting } from './components/ContractDrafting';
-import { ContractData, ReviewSession } from './types';
+import { PrivacyGuard } from './components/PrivacyGuard';
+import { ContractData, ReviewSession, PrivacySessionData, MaskingMap } from './types';
 
 // Mock text for demo purposes
 const DEMO_CONTRACT_TEXT = `CONTRACT FOR SERVICES
@@ -24,6 +26,7 @@ IN WITNESS WHEREOF, the parties have executed this Agreement.`;
 
 enum Page {
   DASHBOARD = 'DASHBOARD',
+  PRIVACY_GUARD = 'PRIVACY_GUARD',
   REVIEW = 'REVIEW',
   DRAFT = 'DRAFT',
   KNOWLEDGE = 'KNOWLEDGE',
@@ -34,6 +37,7 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>(Page.DASHBOARD);
   const [activeContract, setActiveContract] = useState<ContractData | null>(null);
   const [historySession, setHistorySession] = useState<ReviewSession | null>(null);
+  const [privacyData, setPrivacyData] = useState<PrivacySessionData | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [sessions, setSessions] = useState<ReviewSession[]>([]);
 
@@ -73,7 +77,8 @@ const App: React.FC = () => {
           lastModified: file.lastModified
         });
         setHistorySession(null); // Clear history session mode
-        setCurrentPage(Page.REVIEW);
+        setPrivacyData(null); // Clear previous privacy data
+        setCurrentPage(Page.PRIVACY_GUARD); // Go to Privacy Guard first
         setIsProcessing(false);
       };
 
@@ -85,7 +90,6 @@ const App: React.FC = () => {
             // Check for mammoth library
             let mammoth = (window as any).mammoth;
             if (!mammoth) {
-                // Short wait in case script is still loading
                 await new Promise(resolve => setTimeout(resolve, 500));
                 mammoth = (window as any).mammoth;
             }
@@ -126,21 +130,47 @@ const App: React.FC = () => {
       lastModified: Date.now()
     });
     setHistorySession(null);
-    setCurrentPage(Page.REVIEW);
+    setPrivacyData(null);
+    setCurrentPage(Page.PRIVACY_GUARD);
   };
 
   const loadHistory = (session: ReviewSession) => {
       setActiveContract(session.contract);
       setHistorySession(session);
+      // If history session has privacy data, we use it
+      setPrivacyData(session.privacyData || null);
       setCurrentPage(Page.REVIEW);
   };
 
+  const handlePrivacyComplete = (maskedContent: string, map: MaskingMap) => {
+      if (activeContract) {
+          setPrivacyData({
+              originalContent: activeContract.content,
+              maskedContent: maskedContent,
+              maskMap: map,
+              isMasked: true
+          });
+          setCurrentPage(Page.REVIEW);
+      }
+  };
+
   const renderContent = () => {
+    if (currentPage === Page.PRIVACY_GUARD && activeContract) {
+        return (
+            <PrivacyGuard 
+                originalContent={activeContract.content}
+                onComplete={handlePrivacyComplete}
+                onSkip={() => { setPrivacyData(null); setCurrentPage(Page.REVIEW); }}
+            />
+        );
+    }
+
     if (currentPage === Page.REVIEW && activeContract) {
       return (
         <ReviewInterface 
             contract={activeContract} 
             initialSession={historySession}
+            privacyData={privacyData}
             onSaveSession={saveSession}
             onBack={() => { setActiveContract(null); setCurrentPage(Page.DASHBOARD); }} 
         />
@@ -172,6 +202,11 @@ const App: React.FC = () => {
                                         <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(s.timestamp).toLocaleString()}</span>
                                         <span>{s.summary?.type || '未知类型'}</span>
                                         <span className="text-red-500">{s.risks.filter(r => r.level === 'HIGH').length} 高危</span>
+                                        {s.privacyData && (
+                                            <span className="flex items-center gap-1 text-blue-600 bg-blue-50 px-2 rounded-full text-xs">
+                                                <ShieldCheck className="w-3 h-3" /> 脱敏审查
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                                 <Layout className="w-5 h-5 text-gray-300 group-hover:text-blue-500" />

@@ -1,3 +1,4 @@
+
 export enum RiskLevel {
   HIGH = 'HIGH',
   MEDIUM = 'MEDIUM',
@@ -48,10 +49,20 @@ export interface ContractData {
   lastModified: number;
 }
 
+export type MaskingMap = Record<string, string>;
+
+export interface PrivacySessionData {
+    originalContent: string;
+    maskedContent: string;
+    maskMap: MaskingMap;
+    isMasked: boolean;
+}
+
 export interface ReviewSession {
   id: string;
   contract: ContractData;
   summary: ContractSummary | null;
   risks: RiskPoint[];
   timestamp: number;
+  privacyData?: PrivacySessionData;
 }

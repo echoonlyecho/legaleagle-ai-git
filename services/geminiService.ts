@@ -1,5 +1,6 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
-import { ContractStance, ReviewStrictness, RiskLevel, ContractSummary, RiskPoint } from "../types";
+import { ContractStance, ReviewStrictness, RiskLevel, ContractSummary, RiskPoint, MaskingMap } from "../types";
 
 // Helper to get API key safely
 const getApiKey = () => {
@@ -21,7 +22,6 @@ export const generateContractSummary = async (text: string): Promise<ContractSum
     Text: "${text.substring(0, 10000)}..."
   `;
 
-  // Use 'any' for schema type as strict typing for Schema interface might not be exported in all versions
   const schema: any = {
     type: Type.OBJECT,
     properties: {
