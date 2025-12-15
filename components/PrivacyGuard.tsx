@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Shield, Lock, Eye, EyeOff, Plus, Trash2, ArrowRight, ScanLine, Wand2, RefreshCcw, Highlighter, CreditCard } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { Shield, Lock, Trash2, ArrowRight, Wand2, Highlighter, CreditCard, MapPin, Phone, Ban } from 'lucide-react';
 import { MaskingMap } from '../types';
 
 interface PrivacyGuardProps {
@@ -19,7 +19,11 @@ const REGEX_PATTERNS = [
     { 
         id: 'money',
         label: '金额 (Money)', 
-        regex: /(\$|¥|€|£)\s?(\d{1,3}(,\d{3})*(\.\d+)?)|(\d+(\.\d+)?\s?(元|万元|dollars|USD))/gi,
+        // Matches:
+        // 1. Currency symbols ($100, ¥1,000.50)
+        // 2. Suffixes (100元, 1000 Dollars, RMB 100)
+        // 3. Chinese Uppercase (壹万圆整)
+        regex: /((RMB|¥|\$|€|£)\s?([1-9]\d{0,2}(,\d{3})*|0)(\.\d{1,2})?)|(([1-9]\d{0,2}(,\d{3})*|0)(\.\d{1,2})?\s?(元|万元|亿元|USD|Dollars))|([零壹贰叁肆伍陆柒捌玖拾佰仟万亿]+(元|圆))/g,
         prefix: '[AMOUNT_' 
     },
     { 
@@ -36,9 +40,10 @@ const REGEX_PATTERNS = [
     },
     { 
         id: 'phone',
-        label: '手机/身份证 (ID/Phone)', 
-        regex: /(1[3-9]\d{9})|(\d{15}|\d{18})/g, 
-        prefix: '[ID_' 
+        label: '电话/传真 (Tel/Fax)', 
+        // Matches: Mobile (11 digits), Landline (3/4 digits - 7/8 digits), ID cards
+        regex: /((\+?86)?\s?1[3-9]\d{9})|(\d{3,4}-?\d{7,8})|(\d{15}|\d{18})/g, 
+        prefix: '[PHONE_' 
     },
     { 
         id: 'bank',
@@ -54,7 +59,6 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
     const [activeRegexes, setActiveRegexes] = useState<Set<string>>(new Set(['money', 'email', 'date', 'phone', 'bank']));
     
     // UI State
-    const [previewMode, setPreviewMode] = useState<'original' | 'masked'>('original');
     const [selection, setSelection] = useState<string>('');
     const [customPlaceholder, setCustomPlaceholder] = useState('');
     const [popupPos, setPopupPos] = useState<{top: number, left: number} | null>(null);
@@ -68,16 +72,16 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
         const map: MaskingMap = {};
         
         // 1. Apply Manual Rules First (User defined entities usually take precedence)
-        // Sort by length desc to prevent partial replacements causing issues
+        // Sort by length desc to prevent partial replacements (e.g. mask "Tech" inside "TechCorp")
         const sortedRules = [...manualRules].sort((a, b) => b.target.length - a.target.length);
         
         sortedRules.forEach(rule => {
             if (!rule.target) return;
-            // Escape special regex chars in target string
+            // Escape special regex chars in target string to ensure safe regex creation
             const escapedTarget = rule.target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // Global flag 'g' ensures ALL instances are replaced
             const regex = new RegExp(escapedTarget, 'g');
             
-            // Only add to map if it actually exists in text
             if (regex.test(text)) {
                 map[rule.placeholder] = rule.target;
                 text = text.replace(regex, rule.placeholder);
@@ -106,6 +110,14 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
         // Ensure we have a valid selection that is not empty
         if (selectionObj && selectionObj.toString().trim().length > 0) {
             const text = selectionObj.toString().trim();
+            
+            // Prevent selecting text that includes already masked tags (simple heuristic)
+            if (text.includes('[') && text.includes(']')) {
+                setSelection('');
+                setPopupPos(null);
+                return;
+            }
+
             setSelection(text);
             
             // Default placeholder suggestion
@@ -120,17 +132,12 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                 const containerRect = containerRef.current.getBoundingClientRect();
                 
                 // Position popup centered below the selection
-                // Add container.scrollTop to account for scrolling
                 setPopupPos({
                     top: rect.bottom - containerRect.top + containerRef.current.scrollTop + 10,
                     left: rect.left - containerRect.left + (rect.width / 2)
                 });
             }
         } else {
-            // If user clicks without selecting, clear the popup
-            // We check if the click was inside the popup (which is handled by stopPropagation usually, but good to be safe)
-            // Since this handler is on the text div, clicks outside text div won't trigger this.
-            // Clicks on text div that clear selection trigger this with empty string.
             setSelection('');
             setPopupPos(null);
         }
@@ -138,16 +145,21 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
 
     const addManualRule = () => {
         if (selection && customPlaceholder) {
-            setManualRules([...manualRules, {
+            // Remove any existing rules that might conflict (optional, but cleaner)
+            const newRules = manualRules.filter(r => r.target !== selection);
+            setManualRules([...newRules, {
                 id: Date.now().toString(),
                 target: selection,
                 placeholder: customPlaceholder
             }]);
+            
+            // Reset interactions
             setSelection('');
             setCustomPlaceholder('');
             setPopupPos(null);
-            // Switch to preview to show effect
-            setPreviewMode('masked');
+            
+            // Clear browser selection
+            window.getSelection()?.removeAllRanges();
         }
     };
 
@@ -197,47 +209,50 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                 <div className="flex-1 flex flex-col border-r border-gray-200 bg-white">
                     <div className="p-4 border-b flex justify-between items-center bg-gray-50/50">
                         <div className="flex bg-gray-200 rounded-lg p-1">
-                            <button 
-                                onClick={() => setPreviewMode('original')}
-                                className={`px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${previewMode === 'original' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}
-                            >
-                                <Eye className="w-4 h-4" /> 编辑源文本
-                            </button>
-                            <button 
-                                onClick={() => setPreviewMode('masked')}
-                                className={`px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${previewMode === 'masked' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}
-                            >
-                                <EyeOff className="w-4 h-4" /> 预览脱敏结果
-                            </button>
+                            {/* Static indicator since we merged modes */}
+                            <div className="px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 bg-white shadow text-blue-600">
+                                <Shield className="w-4 h-4" /> 
+                                交互式脱敏预览
+                            </div>
                         </div>
-                        <div className="text-xs text-gray-400 flex items-center gap-1">
-                           <Shield className="w-3 h-3" />
-                           {previewMode === 'original' ? '请选择敏感文本进行替换' : 'AI 将仅看到此版本'}
+                        <div className="text-xs text-gray-500 flex items-center gap-1">
+                           <Highlighter className="w-3 h-3" />
+                           请直接选中下方文本以添加新的遮蔽规则 (全文替换)
                         </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-8 relative" ref={containerRef}>
-                         {previewMode === 'original' ? (
-                             <div 
-                                ref={textRef}
-                                onMouseUp={handleTextMouseUp}
-                                className="font-mono text-sm leading-relaxed whitespace-pre-wrap text-gray-800 selection:bg-blue-200 selection:text-blue-900 min-h-[500px]"
-                             >
-                                 {originalContent}
-                             </div>
-                         ) : (
-                             <div className="font-mono text-sm leading-relaxed whitespace-pre-wrap text-gray-600">
-                                 {computedData.text.split(/(\[.*?\])/g).map((part, idx) => {
-                                     if (part.startsWith('[') && part.endsWith(']')) {
-                                         return <span key={idx} className="bg-gray-200 text-gray-600 px-1 rounded mx-0.5 text-xs font-bold border border-gray-300 select-none">{part}</span>
-                                     }
-                                     return part;
-                                 })}
-                             </div>
-                         )}
+                         {/* Render Computed Text with interactive capabilities */}
+                         <div 
+                            ref={textRef}
+                            onMouseUp={handleTextMouseUp}
+                            className="font-mono text-sm leading-relaxed whitespace-pre-wrap text-gray-600 selection:bg-blue-200 selection:text-blue-900 min-h-[500px]"
+                         >
+                             {computedData.text.split(/(\[.*?\])/g).map((part, idx) => {
+                                 // Identify tags and render them as chips
+                                 if (part.startsWith('[') && part.endsWith(']')) {
+                                     // Check if this tag comes from a manual rule or regex (for styling)
+                                     const isManual = manualRules.some(r => r.placeholder === part);
+                                     
+                                     return (
+                                         <span 
+                                            key={idx} 
+                                            className={`
+                                                px-1.5 py-0.5 rounded mx-0.5 text-xs font-bold border select-none inline-block
+                                                ${isManual ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-200 text-gray-700 border-gray-300'}
+                                            `}
+                                            title="已脱敏内容"
+                                         >
+                                             {part}
+                                         </span>
+                                     )
+                                 }
+                                 return part;
+                             })}
+                         </div>
                          
                          {/* Selection Float Menu - Absolutely positioned relative to container */}
-                         {selection && previewMode === 'original' && popupPos && (
+                         {selection && popupPos && (
                              <div 
                                 style={{ top: popupPos.top, left: popupPos.left }}
                                 onMouseUp={(e) => e.stopPropagation()} // Prevent closing when clicking inside
@@ -245,8 +260,8 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                              >
                                  <div className="flex justify-between items-start">
                                     <div>
-                                        <div className="text-xs text-slate-400 mb-1">已选中内容:</div>
-                                        <div className="font-mono text-sm font-bold truncate max-w-[200px] bg-slate-900 p-1 px-2 rounded">{selection}</div>
+                                        <div className="text-xs text-slate-400 mb-1">将选中内容替换为:</div>
+                                        <div className="font-mono text-sm font-bold truncate max-w-[200px] bg-slate-900 p-1 px-2 rounded border border-slate-700">{selection}</div>
                                     </div>
                                     <button onClick={() => { setSelection(''); setPopupPos(null); }} className="text-slate-500 hover:text-white"><Trash2 className="w-4 h-4" /></button>
                                  </div>
@@ -254,8 +269,8 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                                      <input 
                                         value={customPlaceholder}
                                         onChange={(e) => setCustomPlaceholder(e.target.value)}
-                                        placeholder="输入替换词 (如 [PARTY_A])" 
-                                        className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm outline-none focus:border-blue-500"
+                                        placeholder="输入标签 (如 [PARTY_A])" 
+                                        className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                                      />
                                      <button 
                                         onClick={addManualRule}
@@ -265,14 +280,22 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                                          替换
                                      </button>
                                  </div>
-                                 <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-                                     {['[PARTY_A]', '[PARTY_B]', '[COMPANY]', '[NAME]'].map(tag => (
+                                 <div className="grid grid-cols-3 gap-2 pb-1">
+                                     {[
+                                         { label: '[PARTY_A]', icon: null },
+                                         { label: '[PARTY_B]', icon: null },
+                                         { label: '[ADDRESS]', icon: <MapPin className="w-3 h-3" /> },
+                                         { label: '[COMPANY]', icon: null },
+                                         { label: '[NAME]', icon: null },
+                                         { label: '[ID_NUM]', icon: <CreditCard className="w-3 h-3" /> }
+                                     ].map(tag => (
                                          <button 
-                                            key={tag}
-                                            onClick={() => setCustomPlaceholder(tag)}
-                                            className="whitespace-nowrap px-2 py-1 bg-slate-700 rounded text-xs hover:bg-slate-600 transition-colors"
+                                            key={tag.label}
+                                            onClick={() => setCustomPlaceholder(tag.label)}
+                                            className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-700 rounded text-xs hover:bg-slate-600 transition-colors border border-slate-600 hover:border-slate-500"
                                          >
-                                             {tag}
+                                             {tag.icon}
+                                             {tag.label}
                                          </button>
                                      ))}
                                  </div>
@@ -294,7 +317,7 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                     </div>
                     <div className="p-4 space-y-3 border-b border-gray-200">
                         {REGEX_PATTERNS.map(p => (
-                            <label key={p.id} className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200 cursor-pointer hover:border-blue-300 transition-all">
+                            <label key={p.id} className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-200 cursor-pointer hover:border-blue-300 transition-all select-none">
                                 <div className="flex items-center gap-3">
                                     <input 
                                         type="checkbox" 
@@ -318,6 +341,7 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                     <div className="flex-1 overflow-y-auto p-4 space-y-2">
                         {manualRules.length === 0 ? (
                             <div className="text-center py-8 text-gray-400 text-sm">
+                                <Ban className="w-8 h-8 mx-auto mb-2 opacity-20" />
                                 <p>暂无手动规则</p>
                                 <p className="text-xs mt-2">在左侧选中文字即可添加</p>
                             </div>
@@ -325,15 +349,15 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                             manualRules.map(rule => (
                                 <div key={rule.id} className="group bg-white p-3 rounded-lg border border-gray-200 shadow-sm hover:border-blue-300 transition-all">
                                     <div className="flex justify-between items-start mb-1">
-                                        <div className="text-xs text-gray-400 uppercase font-bold">Original</div>
-                                        <button onClick={() => removeRule(rule.id)} className="text-gray-300 hover:text-red-500">
+                                        <div className="text-xs text-gray-400 uppercase font-bold">替换内容 (全局)</div>
+                                        <button onClick={() => removeRule(rule.id)} className="text-gray-300 hover:text-red-500 transition-colors">
                                             <Trash2 className="w-3.5 h-3.5" />
                                         </button>
                                     </div>
-                                    <div className="text-sm font-medium text-gray-800 break-all mb-2">{rule.target}</div>
+                                    <div className="text-sm font-medium text-gray-800 break-all mb-2 bg-gray-50 p-1.5 rounded border border-gray-100">{rule.target}</div>
                                     <div className="flex items-center gap-2">
                                         <ArrowRight className="w-3 h-3 text-gray-400" />
-                                        <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">{rule.placeholder}</span>
+                                        <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-100">{rule.placeholder}</span>
                                     </div>
                                 </div>
                             ))
