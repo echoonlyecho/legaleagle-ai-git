@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ContractData, ContractStance, ReviewStrictness, RiskPoint, RiskLevel, ContractSummary, ReviewSession, PrivacySessionData, MaskingMap } from '../types';
 import { analyzeContractRisks, generateContractSummary } from '../services/geminiService';
-import { Check, X, ArrowRight, Download, Loader2, Sparkles, Wand2, ChevronLeft, ChevronRight, AlertTriangle, Shield, PieChart, Eye, EyeOff, Lock, Play } from 'lucide-react';
+import { Check, X, ArrowRight, Download, Loader2, Sparkles, Wand2, ChevronLeft, ChevronRight, AlertTriangle, Shield, PieChart, Eye, EyeOff, Lock, Play, RotateCcw, CheckCircle2 } from 'lucide-react';
 import * as Diff from 'diff';
 
 interface ReviewInterfaceProps {
@@ -29,6 +30,11 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
   const [strictness, setStrictness] = useState<ReviewStrictness>(ReviewStrictness.BALANCED);
   
   const [selectedRiskId, setSelectedRiskId] = useState<string | null>(null);
+  
+  // UX: History for Undo & Animation States
+  const [history, setHistory] = useState<{text: string, risks: RiskPoint[], selectedId: string | null}[]>([]);
+  const [isAnimatingSuccess, setIsAnimatingSuccess] = useState(false);
+  const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Refs for scrolling
   const docContainerRef = useRef<HTMLDivElement>(null);
@@ -106,6 +112,7 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
 
       setRisks(sortedRisks);
       setLoadingStep('');
+      setHistory([]); // Clear history on new analysis
       
       // Auto Save
       onSaveSession({
@@ -135,8 +142,31 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
     }, 50);
   };
 
+  const handleUndo = () => {
+    if (history.length === 0) return;
+    
+    // Clear any pending navigation from the accept action
+    if (transitionTimeoutRef.current) {
+        clearTimeout(transitionTimeoutRef.current);
+        transitionTimeoutRef.current = null;
+    }
+    setIsAnimatingSuccess(false);
+
+    const prev = history[history.length - 1];
+    setCurrentText(prev.text);
+    setRisks(prev.risks);
+    // Restore selection to the risk we just undid (so user can see it again)
+    setSelectedRiskId(prev.selectedId);
+    
+    // Remove last history entry
+    setHistory(prevHistory => prevHistory.slice(0, -1));
+  };
+
   const handleAcceptRisk = (risk: RiskPoint) => {
-    // 1. Determine next risk BEFORE modifying (while list is stable)
+    // 0. Save current state to history
+    setHistory(prev => [...prev, { text: currentText, risks, selectedId: selectedRiskId }]);
+
+    // 1. Determine next risk ID based on CURRENT active list (before we mark as addressed)
     const currentIndex = sortedActiveRisks.findIndex(r => r.id === risk.id);
     let nextRiskId: string | null = null;
     
@@ -147,25 +177,38 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
         } else {
              nextRiskId = sortedActiveRisks[0].id;
         }
+    } else if (sortedActiveRisks.length === 1) {
+        // This was the last one
+        nextRiskId = null;
     }
 
-    // 2. Update text
+    // 2. Update text & Mark as addressed
     const newText = currentText.replace(risk.originalText, risk.suggestedText);
-    setCurrentText(newText);
-    
-    // 3. Update Risk State
     const updatedRisks = risks.map(r => r.id === risk.id ? { ...r, isAddressed: true } : r);
+    
+    setCurrentText(newText);
     setRisks(updatedRisks);
     
-    // 4. Advance
-    if (nextRiskId) {
-        handleSelectRisk(nextRiskId);
-    } else {
-        setSelectedRiskId(null);
-    }
+    // 3. Trigger Success Animation (Buffer)
+    setIsAnimatingSuccess(true);
+    
+    // 4. Delay navigation
+    if (transitionTimeoutRef.current) clearTimeout(transitionTimeoutRef.current);
+    
+    transitionTimeoutRef.current = setTimeout(() => {
+        setIsAnimatingSuccess(false);
+        if (nextRiskId) {
+            handleSelectRisk(nextRiskId);
+        } else {
+            setSelectedRiskId(null);
+        }
+    }, 1500); // 1.5s buffer for user to see the change
   };
 
   const handleIgnoreRisk = (riskId: string) => {
+     // Save history
+     setHistory(prev => [...prev, { text: currentText, risks, selectedId: selectedRiskId }]);
+
      // 1. Determine next
      const currentIndex = sortedActiveRisks.findIndex(r => r.id === riskId);
      let nextRiskId: string | null = null;
@@ -181,7 +224,7 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
     const updatedRisks = risks.map(r => r.id === riskId ? { ...r, isAddressed: true } : r);
     setRisks(updatedRisks);
     
-    // 3. Advance
+    // Immediate navigation for Ignore (less need for visual confirmation of text change)
     if (nextRiskId) {
         handleSelectRisk(nextRiskId);
     } else {
@@ -290,6 +333,19 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
 
   return (
     <div className="flex flex-col h-full bg-slate-50 relative">
+      {/* Undo Toast */}
+      {history.length > 0 && (
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-800/90 backdrop-blur text-white pl-6 pr-4 py-3 rounded-full shadow-xl flex items-center gap-6 animate-in slide-in-from-bottom-4 z-[70] border border-slate-700/50">
+              <span className="text-sm font-medium">上一步操作已保存</span>
+              <button 
+                onClick={handleUndo} 
+                className="flex items-center gap-1.5 text-blue-300 hover:text-white transition-colors text-sm font-bold bg-white/10 px-3 py-1 rounded-full hover:bg-white/20"
+              >
+                  <RotateCcw className="w-3.5 h-3.5" /> 撤销
+              </button>
+          </div>
+      )}
+
       {/* Header */}
       <div className="bg-white border-b px-6 py-4 flex items-center justify-between shadow-sm z-10 shrink-0">
         <div className="flex items-center gap-4">
@@ -320,7 +376,6 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {/* Privacy Toggle removed as requested */}
           {risks.length > 0 && (
             <button 
                 onClick={downloadContract}
@@ -537,74 +592,88 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
       {/* 3. Risk Detail Drawer (Fixed Overlay) */}
       {selectedRisk && (
         <div className="fixed top-0 right-0 bottom-0 w-[450px] bg-white shadow-[0_0_50px_-12px_rgba(0,0,0,0.25)] border-l border-gray-200 z-[60] flex flex-col animate-in slide-in-from-right duration-300">
-            {/* Detail Header */}
-            <div className="p-4 pt-6 border-b flex items-center justify-between bg-slate-50">
-                <button onClick={() => setSelectedRiskId(null)} className="text-gray-500 hover:text-gray-800 flex items-center gap-1 text-sm font-medium">
-                    <ChevronLeft className="w-4 h-4" /> 返回概览
-                </button>
-                <div className="flex items-center gap-1">
-                    <button onClick={() => navigateRisk('prev')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Previous Risk">
-                        <ChevronLeft className="w-5 h-5" />
-                    </button>
-                    <span className="text-xs text-gray-400 font-mono">
-                        {currentIndexDisplay} / {activeCount}
-                    </span>
-                    <button onClick={() => navigateRisk('next')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Next Risk">
-                        <ChevronRight className="w-5 h-5" />
-                    </button>
-                    <button onClick={() => setSelectedRiskId(null)} className="ml-2 p-1.5 hover:bg-red-50 hover:text-red-500 rounded text-gray-400" title="Close">
-                        <X className="w-5 h-5" />
-                    </button>
+            {isAnimatingSuccess ? (
+                // SUCCESS ANIMATION STATE
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+                    <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6 animate-bounce">
+                        <CheckCircle2 className="w-10 h-10 text-green-600" />
+                    </div>
+                    <h3 className="text-2xl font-bold text-gray-800 mb-2">已采纳修改</h3>
+                    <p className="text-gray-500 mb-8">正在跳转至下一条风险...</p>
                 </div>
-            </div>
+            ) : (
+                // NORMAL STATE
+                <>
+                    {/* Detail Header */}
+                    <div className="p-4 pt-6 border-b flex items-center justify-between bg-slate-50">
+                        <button onClick={() => setSelectedRiskId(null)} className="text-gray-500 hover:text-gray-800 flex items-center gap-1 text-sm font-medium">
+                            <ChevronLeft className="w-4 h-4" /> 返回概览
+                        </button>
+                        <div className="flex items-center gap-1">
+                            <button onClick={() => navigateRisk('prev')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Previous Risk">
+                                <ChevronLeft className="w-5 h-5" />
+                            </button>
+                            <span className="text-xs text-gray-400 font-mono">
+                                {currentIndexDisplay} / {activeCount}
+                            </span>
+                            <button onClick={() => navigateRisk('next')} className="p-1.5 hover:bg-gray-200 rounded text-gray-600" title="Next Risk">
+                                <ChevronRight className="w-5 h-5" />
+                            </button>
+                            <button onClick={() => setSelectedRiskId(null)} className="ml-2 p-1.5 hover:bg-red-50 hover:text-red-500 rounded text-gray-400" title="Close">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                    </div>
 
-            {/* Detail Content */}
-            <div className="flex-1 overflow-y-auto p-6">
-                <div className="flex items-center gap-2 mb-4">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold tracking-wide uppercase ${
-                        selectedRisk.level === RiskLevel.HIGH ? 'bg-red-100 text-red-700' :
-                        selectedRisk.level === RiskLevel.MEDIUM ? 'bg-orange-100 text-orange-700' :
-                        'bg-yellow-100 text-yellow-700'
-                    }`}>
-                        {selectedRisk.level} Risk
-                    </span>
-                </div>
-                
-                <h3 className="text-xl font-bold text-gray-900 mb-3">{selectedRisk.riskDescription}</h3>
-                <div className="bg-slate-50 p-4 rounded-lg border border-slate-100 mb-6 text-gray-600 leading-relaxed text-sm">
-                    {selectedRisk.reason}
-                </div>
+                    {/* Detail Content */}
+                    <div className="flex-1 overflow-y-auto p-6">
+                        <div className="flex items-center gap-2 mb-4">
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold tracking-wide uppercase ${
+                                selectedRisk.level === RiskLevel.HIGH ? 'bg-red-100 text-red-700' :
+                                selectedRisk.level === RiskLevel.MEDIUM ? 'bg-orange-100 text-orange-700' :
+                                'bg-yellow-100 text-yellow-700'
+                            }`}>
+                                {selectedRisk.level} Risk
+                            </span>
+                        </div>
+                        
+                        <h3 className="text-xl font-bold text-gray-900 mb-3">{selectedRisk.riskDescription}</h3>
+                        <div className="bg-slate-50 p-4 rounded-lg border border-slate-100 mb-6 text-gray-600 leading-relaxed text-sm">
+                            {selectedRisk.reason}
+                        </div>
 
-                <div className="mb-2 flex items-center gap-2">
-                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">建议修改 (Diff)</span>
-                    <div className="h-px bg-gray-100 flex-1"></div>
-                </div>
-                
-                <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-8 shadow-inner">
-                    <DiffViewer 
-                        oldValue={(!isMaskedView && privacyData) ? unmaskText(selectedRisk.originalText) : selectedRisk.originalText} 
-                        newValue={(!isMaskedView && privacyData) ? unmaskText(selectedRisk.suggestedText) : selectedRisk.suggestedText} 
-                    />
-                </div>
-            </div>
+                        <div className="mb-2 flex items-center gap-2">
+                            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">建议修改 (Diff)</span>
+                            <div className="h-px bg-gray-100 flex-1"></div>
+                        </div>
+                        
+                        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-8 shadow-inner">
+                            <DiffViewer 
+                                oldValue={(!isMaskedView && privacyData) ? unmaskText(selectedRisk.originalText) : selectedRisk.originalText} 
+                                newValue={(!isMaskedView && privacyData) ? unmaskText(selectedRisk.suggestedText) : selectedRisk.suggestedText} 
+                            />
+                        </div>
+                    </div>
 
-            {/* Sticky Footer Actions */}
-            <div className="p-4 border-t bg-white shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10">
-                <div className="flex gap-3">
-                    <button 
-                        onClick={() => handleAcceptRisk(selectedRisk)}
-                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-transform active:scale-95"
-                    >
-                        <Check className="w-5 h-5" /> 采纳修改
-                    </button>
-                    <button 
-                        onClick={() => handleIgnoreRisk(selectedRisk.id)}
-                        className="px-6 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2"
-                    >
-                        忽略
-                    </button>
-                </div>
-            </div>
+                    {/* Sticky Footer Actions */}
+                    <div className="p-4 border-t bg-white shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10">
+                        <div className="flex gap-3">
+                            <button 
+                                onClick={() => handleAcceptRisk(selectedRisk)}
+                                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-lg shadow-blue-100"
+                            >
+                                <Check className="w-5 h-5" /> 采纳修改
+                            </button>
+                            <button 
+                                onClick={() => handleIgnoreRisk(selectedRisk.id)}
+                                className="px-6 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                            >
+                                忽略
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
       )}
     </div>
