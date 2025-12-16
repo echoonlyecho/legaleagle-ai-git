@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { UploadCloud, FileText, Settings, ShieldCheck, PenTool, Layout, Loader2, History, Clock } from 'lucide-react';
+import { UploadCloud, FileText, Settings, ShieldCheck, PenTool, Layout, Loader2, History, Clock, FileWarning, ArrowRight } from 'lucide-react';
 import { ReviewInterface } from './components/ReviewInterface';
 import { KnowledgeBase } from './components/KnowledgeBase';
 import { ContractDrafting } from './components/ContractDrafting';
@@ -40,6 +40,10 @@ const App: React.FC = () => {
   const [privacyData, setPrivacyData] = useState<PrivacySessionData | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [sessions, setSessions] = useState<ReviewSession[]>([]);
+  
+  // Upload Flow State
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [showUploadGuide, setShowUploadGuide] = useState(false);
 
   // Load history on mount
   useEffect(() => {
@@ -59,9 +63,29 @@ const App: React.FC = () => {
       localStorage.setItem('legalEagle_history', JSON.stringify(updated));
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
+  const onFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.[0]) {
+        setPendingFile(e.target.files[0]);
+        setShowUploadGuide(true);
+        // Clear input value so same file can be selected again if needed
+        e.target.value = ''; 
+    }
+  };
+
+  const confirmUpload = () => {
+    if (pendingFile) {
+        setShowUploadGuide(false);
+        processFile(pendingFile);
+        setPendingFile(null);
+    }
+  };
+
+  const cancelUpload = () => {
+    setPendingFile(null);
+    setShowUploadGuide(false);
+  };
+
+  const processFile = (file: File) => {
       setIsProcessing(true);
       const reader = new FileReader();
       
@@ -120,7 +144,6 @@ const App: React.FC = () => {
              processContent(DEMO_CONTRACT_TEXT);
          }, 1000);
       }
-    }
   };
 
   const useDemoContract = () => {
@@ -243,7 +266,7 @@ const App: React.FC = () => {
                   <input 
                     type="file" 
                     className="absolute inset-0 opacity-0 cursor-pointer z-10" 
-                    onChange={handleFileUpload}
+                    onChange={onFileSelect}
                     accept=".txt,.md,.doc,.docx,.pdf"
                     disabled={isProcessing}
                   />
@@ -251,7 +274,7 @@ const App: React.FC = () => {
                     {isProcessing ? <Loader2 className="w-8 h-8 text-blue-600 animate-spin" /> : <UploadCloud className="w-8 h-8 text-blue-600" />}
                   </div>
                   <h3 className="text-xl font-bold text-slate-800 mb-2 z-0">{isProcessing ? '正在解析...' : '上传合同审查'}</h3>
-                  <p className="text-slate-500 mb-6 z-0">支持 Word (.docx), TXT 格式</p>
+                  <p className="text-slate-500 mb-6 z-0">支持 Word, Markdown, TXT 格式</p>
                   <button className="bg-blue-600 text-white px-6 py-2 rounded-full font-medium hover:bg-blue-700 transition-colors z-0">
                     选择文件
                   </button>
@@ -293,7 +316,51 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex relative">
+      {/* Upload Guide Modal */}
+      {showUploadGuide && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+              <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+                  <div className="p-6">
+                      <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mb-4">
+                          <FileWarning className="w-6 h-6 text-yellow-600" />
+                      </div>
+                      <h3 className="text-xl font-bold text-gray-900 mb-2">上传前请确认</h3>
+                      <div className="space-y-4 text-sm text-gray-600 leading-relaxed">
+                          <p>
+                              您正在上传合同文件。LegalEagle AI 专注于<strong>法律风险审查与内容分析</strong>。
+                          </p>
+                          <div className="bg-slate-50 p-4 rounded-lg border border-slate-100">
+                              <p className="font-semibold text-slate-800 mb-2">⚠️ 排版格式提示</p>
+                              <p>由于浏览器安全限制，文件解析过程可能会<strong>丢失原始 Word 排版格式</strong> (如页眉、页脚、复杂表格)。</p>
+                          </div>
+                          <p>
+                              建议您：
+                              <br/>
+                              1. 在此平台完成<strong>内容审查与风险确认</strong>
+                              <br/>
+                              2. 确认无误后，再在本地 Word 中调整最终排版
+                          </p>
+                      </div>
+                  </div>
+                  <div className="p-4 bg-gray-50 flex gap-3 justify-end border-t border-gray-100">
+                      <button 
+                          onClick={cancelUpload}
+                          className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded-lg font-medium transition-colors"
+                      >
+                          取消上传
+                      </button>
+                      <button 
+                          onClick={confirmUpload}
+                          className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold flex items-center gap-2 transition-colors shadow-lg shadow-blue-200"
+                      >
+                          确认并开始审查 <ArrowRight className="w-4 h-4" />
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* Sidebar */}
       <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col sticky top-0 h-screen">
         <div className="p-6 border-b border-slate-800">
