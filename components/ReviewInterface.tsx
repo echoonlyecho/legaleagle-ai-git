@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ContractData, ContractStance, ReviewStrictness, RiskPoint, RiskLevel, ContractSummary, ReviewSession, PrivacySessionData, MaskingMap } from '../types';
 import { analyzeContractRisks, generateContractSummary } from '../services/geminiService';
-import { Check, X, ArrowRight, Download, Loader2, Sparkles, Wand2, ChevronLeft, ChevronRight, AlertTriangle, Shield, PieChart, Eye, EyeOff, Lock } from 'lucide-react';
+import { Check, X, ArrowRight, Download, Loader2, Sparkles, Wand2, ChevronLeft, ChevronRight, AlertTriangle, Shield, PieChart, Eye, EyeOff, Lock, Play } from 'lucide-react';
 import * as Diff from 'diff';
 
 interface ReviewInterfaceProps {
@@ -63,6 +62,21 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
     }
   }, [contract, initialSession, privacyData]);
 
+  // Computed: Active risks sorted by position in the text
+  // This ensures the "1 of 5" numbering and Next/Prev buttons follow visual order
+  const sortedActiveRisks = useMemo(() => {
+    return risks
+      .filter(r => !r.isAddressed)
+      .sort((a, b) => {
+          const idxA = currentText.indexOf(a.originalText);
+          const idxB = currentText.indexOf(b.originalText);
+          // If text not found (e.g. modified), push to end
+          if (idxA === -1) return 1;
+          if (idxB === -1) return -1;
+          return idxA - idxB;
+      });
+  }, [risks, currentText]);
+
   // Helper to unmask text
   const unmaskText = (text: string): string => {
       if (!text) return '';
@@ -84,7 +98,13 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
     try {
       // Analyze the CURRENT text (which is masked if privacy mode is on)
       const identifiedRisks = await analyzeContractRisks(currentText, stance, strictness, rulesContext);
-      setRisks(identifiedRisks);
+      
+      // Sort risks by their position in the text initially
+      const sortedRisks = identifiedRisks.sort((a, b) => {
+          return currentText.indexOf(a.originalText) - currentText.indexOf(b.originalText);
+      });
+
+      setRisks(sortedRisks);
       setLoadingStep('');
       
       // Auto Save
@@ -92,7 +112,7 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
           id: Date.now().toString(),
           contract: { ...contract, content: currentText }, // Saving the working copy
           summary,
-          risks: identifiedRisks,
+          risks: sortedRisks,
           timestamp: Date.now(),
           privacyData: privacyData || undefined
       });
@@ -115,66 +135,83 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
     }, 50);
   };
 
-  const advanceToNextRisk = (currentId: string, currentRisks: RiskPoint[]) => {
-      const activeRisks = currentRisks.filter(r => !r.isAddressed);
-      if (activeRisks.length === 0) {
-          setSelectedRiskId(null);
-          return;
-      }
-
-      // Find where the just-addressed risk was in the full list
-      const currentIndexInFull = currentRisks.findIndex(r => r.id === currentId);
-      
-      // Try to find the next active risk appearing AFTER this position in the original document order
-      let nextRisk = currentRisks.find((r, i) => !r.isAddressed && i > currentIndexInFull);
-      
-      // If none after, wrap to the first active risk available (beginning of doc)
-      if (!nextRisk) {
-          nextRisk = activeRisks[0];
-      }
-      
-      if (nextRisk) {
-          handleSelectRisk(nextRisk.id);
-      }
-  };
-
   const handleAcceptRisk = (risk: RiskPoint) => {
-    // 1. Update text
+    // 1. Determine next risk BEFORE modifying (while list is stable)
+    const currentIndex = sortedActiveRisks.findIndex(r => r.id === risk.id);
+    let nextRiskId: string | null = null;
+    
+    if (currentIndex !== -1 && sortedActiveRisks.length > 1) {
+        // If we are at the end, wrap to 0. If not, go to next.
+        if (currentIndex < sortedActiveRisks.length - 1) {
+             nextRiskId = sortedActiveRisks[currentIndex + 1].id;
+        } else {
+             nextRiskId = sortedActiveRisks[0].id;
+        }
+    }
+
+    // 2. Update text
     const newText = currentText.replace(risk.originalText, risk.suggestedText);
     setCurrentText(newText);
     
-    // 2. Update Risk State
+    // 3. Update Risk State
     const updatedRisks = risks.map(r => r.id === risk.id ? { ...r, isAddressed: true } : r);
     setRisks(updatedRisks);
     
-    // 3. Auto-advance to next risk
-    advanceToNextRisk(risk.id, updatedRisks);
+    // 4. Advance
+    if (nextRiskId) {
+        handleSelectRisk(nextRiskId);
+    } else {
+        setSelectedRiskId(null);
+    }
   };
 
   const handleIgnoreRisk = (riskId: string) => {
+     // 1. Determine next
+     const currentIndex = sortedActiveRisks.findIndex(r => r.id === riskId);
+     let nextRiskId: string | null = null;
+     if (currentIndex !== -1 && sortedActiveRisks.length > 1) {
+         if (currentIndex < sortedActiveRisks.length - 1) {
+              nextRiskId = sortedActiveRisks[currentIndex + 1].id;
+         } else {
+              nextRiskId = sortedActiveRisks[0].id;
+         }
+     }
+
+    // 2. Update State
     const updatedRisks = risks.map(r => r.id === riskId ? { ...r, isAddressed: true } : r);
     setRisks(updatedRisks);
-    advanceToNextRisk(riskId, updatedRisks);
+    
+    // 3. Advance
+    if (nextRiskId) {
+        handleSelectRisk(nextRiskId);
+    } else {
+        setSelectedRiskId(null);
+    }
   };
 
   const navigateRisk = (direction: 'next' | 'prev') => {
-      const activeRisks = risks.filter(r => !r.isAddressed);
-      if (activeRisks.length === 0) return;
+      if (sortedActiveRisks.length === 0) return;
 
-      let currentIndex = activeRisks.findIndex(r => r.id === selectedRiskId);
+      let currentIndex = sortedActiveRisks.findIndex(r => r.id === selectedRiskId);
       
-      // If current selection is not in active set (e.g. just resolved), treat as starting from -1
-      // so Next (+1) goes to 0 (first active), Prev (-1-1=-2) wraps to end.
+      // If current selection is lost, default to 0
       if (currentIndex === -1) {
           currentIndex = -1;
       }
 
       let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
       
-      if (nextIndex >= activeRisks.length) nextIndex = 0;
-      if (nextIndex < 0) nextIndex = activeRisks.length - 1;
+      if (nextIndex >= sortedActiveRisks.length) nextIndex = 0;
+      if (nextIndex < 0) nextIndex = sortedActiveRisks.length - 1;
 
-      handleSelectRisk(activeRisks[nextIndex].id);
+      handleSelectRisk(sortedActiveRisks[nextIndex].id);
+  };
+
+  const jumpToFirstRisk = (level?: RiskLevel) => {
+      const target = sortedActiveRisks.find(r => !level || r.level === level);
+      if (target) {
+          handleSelectRisk(target.id);
+      }
   };
 
   const downloadContract = () => {
@@ -192,9 +229,8 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
     // Current text is masked if we started with privacyData.
     // We split based on the risk.originalText (which matches the masked text).
     let parts: { text: string; riskId?: string; level?: RiskLevel }[] = [{ text: currentText }];
-    const activeRisks = risks.filter(r => !r.isAddressed);
     
-    activeRisks.forEach(risk => {
+    sortedActiveRisks.forEach(risk => {
       const newParts: typeof parts = [];
       parts.forEach(part => {
         if (part.riskId) {
@@ -246,12 +282,10 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
   };
 
   const selectedRisk = risks.find(r => r.id === selectedRiskId);
-  // We calculate active risks for the drawer counter
-  const activeRisks = risks.filter(r => !r.isAddressed);
-  const activeCount = activeRisks.length;
-  // If selected risk is addressed, indexOf returns -1. We display '-' instead of 0 for clarity.
+  const activeCount = sortedActiveRisks.length;
+  // Determine index in the SORTED list for display
   const currentIndexDisplay = selectedRisk && !selectedRisk.isAddressed 
-      ? activeRisks.findIndex(r => r.id === selectedRisk.id) + 1 
+      ? sortedActiveRisks.findIndex(r => r.id === selectedRisk.id) + 1 
       : '-';
 
   return (
@@ -302,13 +336,15 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                 </button>
             </div>
           )}
-          <button 
-            onClick={downloadContract}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            {privacyData ? '复敏下载' : '下载合同'}
-          </button>
+          {risks.length > 0 && (
+            <button 
+                onClick={downloadContract}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"
+            >
+                <Download className="w-4 h-4" />
+                {privacyData ? '复敏下载' : '下载合同'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -408,8 +444,11 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                 <div className="p-6 space-y-6 overflow-y-auto">
                     {/* Summary Cards */}
                     <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                            <div className="text-3xl font-bold text-gray-800 mb-1">{risks.length}</div>
+                        <div 
+                            onClick={() => jumpToFirstRisk()}
+                            className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow-md cursor-pointer transition-all group"
+                        >
+                            <div className="text-3xl font-bold text-gray-800 mb-1 group-hover:text-blue-600">{risks.length}</div>
                             <div className="text-xs text-gray-500 uppercase font-medium">风险总数</div>
                         </div>
                         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
@@ -424,7 +463,10 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                             <span className="text-xs font-bold text-gray-500 uppercase">风险分布</span>
                         </div>
                         <div className="divide-y divide-gray-100">
-                            <div className="flex items-center justify-between p-4">
+                            <div 
+                                onClick={() => jumpToFirstRisk(RiskLevel.HIGH)}
+                                className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                            >
                                 <div className="flex items-center gap-3">
                                     <div className="w-3 h-3 rounded-full bg-red-500 shadow-sm shadow-red-200"></div>
                                     <span className="text-sm font-medium text-gray-700">高风险 (High)</span>
@@ -433,7 +475,10 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                                     {risks.filter(r => r.level === RiskLevel.HIGH && !r.isAddressed).length}
                                 </span>
                             </div>
-                            <div className="flex items-center justify-between p-4">
+                            <div 
+                                onClick={() => jumpToFirstRisk(RiskLevel.MEDIUM)}
+                                className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                            >
                                 <div className="flex items-center gap-3">
                                     <div className="w-3 h-3 rounded-full bg-orange-500 shadow-sm shadow-orange-200"></div>
                                     <span className="text-sm font-medium text-gray-700">中风险 (Medium)</span>
@@ -442,7 +487,10 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                                     {risks.filter(r => r.level === RiskLevel.MEDIUM && !r.isAddressed).length}
                                 </span>
                             </div>
-                            <div className="flex items-center justify-between p-4">
+                            <div 
+                                onClick={() => jumpToFirstRisk(RiskLevel.LOW)}
+                                className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                            >
                                 <div className="flex items-center gap-3">
                                     <div className="w-3 h-3 rounded-full bg-yellow-500 shadow-sm shadow-yellow-200"></div>
                                     <span className="text-sm font-medium text-gray-700">低风险 (Low)</span>
@@ -454,19 +502,28 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                         </div>
                     </div>
 
-                    {/* Instructions */}
+                    {/* Instructions / Actions */}
                     {activeCount > 0 ? (
-                        <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex gap-4 items-start">
-                            <AlertTriangle className="w-6 h-6 text-blue-500 shrink-0 mt-0.5" />
-                            <div>
-                                <h4 className="text-sm font-bold text-blue-800 mb-1">待处理事项</h4>
-                                <p className="text-sm text-blue-600 leading-relaxed">
-                                    左侧文档中标记了 <strong>{activeCount}</strong> 处风险点。
-                                    <br/>
-                                    <span className="font-semibold underline">点击文档中的高亮文本</span> 即可在此处查看详情并进行修改。
-                                </p>
+                        <>
+                            <div className="bg-blue-50 border border-blue-100 rounded-xl p-5 flex gap-4 items-start">
+                                <AlertTriangle className="w-6 h-6 text-blue-500 shrink-0 mt-0.5" />
+                                <div>
+                                    <h4 className="text-sm font-bold text-blue-800 mb-1">待处理事项</h4>
+                                    <p className="text-sm text-blue-600 leading-relaxed">
+                                        左侧文档中标记了 <strong>{activeCount}</strong> 处风险点。
+                                        <br/>
+                                        点击上方卡片或点击下方按钮开始逐一审查。
+                                    </p>
+                                </div>
                             </div>
-                        </div>
+                            <button 
+                                onClick={() => jumpToFirstRisk()}
+                                className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[0.98]"
+                            >
+                                <Play className="w-5 h-5 fill-current" />
+                                开始逐条处理
+                            </button>
+                        </>
                     ) : (
                         <div className="flex flex-col items-center justify-center py-8 text-center">
                             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">

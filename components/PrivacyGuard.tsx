@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useRef } from 'react';
 import { Shield, Lock, Trash2, ArrowRight, Wand2, Highlighter, CreditCard, MapPin, Phone, Ban, Building2, User, Users, UserCircle } from 'lucide-react';
 import { MaskingMap } from '../types';
@@ -76,6 +75,7 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
     const computedData = useMemo(() => {
         let text = originalContent;
         const map: MaskingMap = {};
+        let totalCount = 0;
         
         // 1. Apply Manual Rules First (User defined entities usually take precedence)
         // Sort by length desc to prevent partial replacements (e.g. mask "Tech" inside "TechCorp")
@@ -97,7 +97,9 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
             // Global flag 'g' ensures ALL instances are replaced throughout the document
             const regex = new RegExp(patternString, 'g');
             
-            if (regex.test(text)) {
+            const matches = text.match(regex);
+            if (matches) {
+                totalCount += matches.length;
                 map[rule.placeholder] = rule.target;
                 text = text.replace(regex, rule.placeholder);
             }
@@ -111,12 +113,13 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                     const placeholder = `${pattern.prefix}${counter}]`;
                     map[placeholder] = match;
                     counter++;
+                    totalCount++;
                     return placeholder;
                 });
             }
         });
 
-        return { text, map };
+        return { text, map, totalCount };
     }, [originalContent, manualRules, activeRegexes]);
 
     const handleTextMouseUp = () => {
@@ -248,15 +251,16 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                                  if (part.startsWith('[') && part.endsWith(']')) {
                                      // Check if this tag comes from a manual rule or regex (for styling)
                                      const isManual = manualRules.some(r => r.placeholder === part);
+                                     const originalText = computedData.map[part];
                                      
                                      return (
                                          <span 
                                             key={idx} 
                                             className={`
-                                                px-1.5 py-0.5 rounded mx-0.5 text-xs font-bold border select-none inline-block
-                                                ${isManual ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-200 text-gray-700 border-gray-300'}
+                                                px-1.5 py-0.5 rounded mx-0.5 text-xs font-bold border select-none inline-block cursor-help transition-colors
+                                                ${isManual ? 'bg-purple-100 text-purple-700 border-purple-200 hover:bg-purple-200' : 'bg-gray-200 text-gray-700 border-gray-300 hover:bg-gray-300'}
                                             `}
-                                            title="已脱敏内容"
+                                            title={`原文: ${originalText || '未知'}`}
                                          >
                                              {part}
                                          </span>
@@ -393,7 +397,7 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                     {/* Stats Footer - Fixed at bottom */}
                     <div className="p-4 bg-white border-t border-gray-200 text-xs text-gray-500 flex justify-between shrink-0 z-20">
                          <span>已掩盖敏感词:</span>
-                         <span className="font-bold text-gray-800">{Object.keys(computedData.map).length} 处</span>
+                         <span className="font-bold text-gray-800">{computedData.totalCount} 处</span>
                     </div>
                 </div>
             </div>
