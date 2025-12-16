@@ -34,6 +34,7 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
   // UX: History for Undo & Animation States
   const [history, setHistory] = useState<{text: string, risks: RiskPoint[], selectedId: string | null}[]>([]);
   const [isAnimatingSuccess, setIsAnimatingSuccess] = useState(false);
+  const [animatingRiskId, setAnimatingRiskId] = useState<string | null>(null);
   const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Refs for scrolling
@@ -151,6 +152,7 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
         transitionTimeoutRef.current = null;
     }
     setIsAnimatingSuccess(false);
+    setAnimatingRiskId(null);
 
     const prev = history[history.length - 1];
     setCurrentText(prev.text);
@@ -182,21 +184,23 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
         nextRiskId = null;
     }
 
-    // 2. Update text & Mark as addressed
+    // 2. Set Animation State BEFORE changing text logic visually for the user
+    setAnimatingRiskId(risk.id);
+    setIsAnimatingSuccess(true);
+
+    // 3. Update text & Mark as addressed
     const newText = currentText.replace(risk.originalText, risk.suggestedText);
     const updatedRisks = risks.map(r => r.id === risk.id ? { ...r, isAddressed: true } : r);
     
     setCurrentText(newText);
     setRisks(updatedRisks);
     
-    // 3. Trigger Success Animation (Buffer)
-    setIsAnimatingSuccess(true);
-    
-    // 4. Delay navigation
+    // 4. Delay navigation to show the change
     if (transitionTimeoutRef.current) clearTimeout(transitionTimeoutRef.current);
     
     transitionTimeoutRef.current = setTimeout(() => {
         setIsAnimatingSuccess(false);
+        setAnimatingRiskId(null);
         if (nextRiskId) {
             handleSelectRisk(nextRiskId);
         } else {
@@ -269,23 +273,56 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
   };
 
   const renderDocumentContent = () => {
-    // Current text is masked if we started with privacyData.
-    // We split based on the risk.originalText (which matches the masked text).
-    let parts: { text: string; riskId?: string; level?: RiskLevel }[] = [{ text: currentText }];
+    // We need to render:
+    // 1. Current text.
+    // 2. Active Risks (highlighted based on originalText).
+    // 3. The currently animating risk (highlighted based on suggestedText, because the text has already been updated!).
     
-    sortedActiveRisks.forEach(risk => {
+    // Build a combined list of segments to highlight
+    const segmentsToHighlight = [
+        ...sortedActiveRisks.map(r => ({ ...r, matchText: r.originalText, isAnimating: false })),
+    ];
+    
+    // If we are animating a success state, we need to find that specific risk and highlight its NEW text (suggestedText)
+    if (animatingRiskId) {
+        const animatingRisk = risks.find(r => r.id === animatingRiskId);
+        if (animatingRisk) {
+            segmentsToHighlight.push({
+                ...animatingRisk,
+                matchText: animatingRisk.suggestedText,
+                isAnimating: true
+            });
+        }
+    }
+
+    // Sort segments by their position in the current text to ensure correct splitting order
+    // Note: If originalText is gone (replaced), indexOf will be -1, effectively filtering it out if we check.
+    // However, since we just replaced original with suggested, the active risks shouldn't overlap with the animating one unless there are duplicates.
+    const sortedSegments = segmentsToHighlight
+        .filter(s => currentText.indexOf(s.matchText) !== -1)
+        .sort((a, b) => currentText.indexOf(a.matchText) - currentText.indexOf(b.matchText));
+
+    let parts: { text: string; riskId?: string; level?: RiskLevel; isAnimating?: boolean }[] = [{ text: currentText }];
+    
+    sortedSegments.forEach(segment => {
       const newParts: typeof parts = [];
       parts.forEach(part => {
         if (part.riskId) {
           newParts.push(part);
           return;
         }
-        const split = part.text.split(risk.originalText);
+        
+        const split = part.text.split(segment.matchText);
         if (split.length > 1) {
           for (let i = 0; i < split.length; i++) {
             newParts.push({ text: split[i] });
             if (i < split.length - 1) {
-              newParts.push({ text: risk.originalText, riskId: risk.id, level: risk.level });
+              newParts.push({ 
+                  text: segment.matchText, 
+                  riskId: segment.id, 
+                  level: segment.level,
+                  isAnimating: segment.isAnimating 
+                });
             }
           }
         } else {
@@ -301,24 +338,40 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
            // If user wants "Original View", we visually unmask the content segment
            const displayText = (!isMaskedView && privacyData) ? unmaskText(part.text) : part.text;
            
-           return part.riskId ? (
-            <span 
-              key={idx} 
-              id={`highlight-${part.riskId}`}
-              ref={el => highlightRefs.current[part.riskId!] = el}
-              onClick={() => handleSelectRisk(part.riskId!)}
-              className={`cursor-pointer border-b-2 transition-colors duration-200 scroll-mt-32 ${
-                selectedRiskId === part.riskId ? 'bg-blue-600 text-white border-blue-800 px-1 rounded shadow-sm' :
-                part.level === RiskLevel.HIGH ? 'bg-red-50 border-red-500 hover:bg-red-100' : 
-                part.level === RiskLevel.MEDIUM ? 'bg-orange-50 border-orange-500 hover:bg-orange-100' : 
-                'bg-yellow-50 border-yellow-500 hover:bg-yellow-100'
-              }`}
-            >
-              {displayText}
-            </span>
-          ) : (
-            <span key={idx}>{displayText}</span>
-          )
+           if (part.riskId) {
+               // Special rendering for the animating (just accepted) risk
+               if (part.isAnimating) {
+                   return (
+                       <span 
+                            key={idx}
+                            id={`highlight-${part.riskId}`}
+                            ref={el => highlightRefs.current[part.riskId!] = el}
+                            className="bg-green-100 text-green-800 ring-2 ring-green-400/50 rounded px-1 transition-all duration-1000 ease-out animate-in fade-in zoom-in-95"
+                       >
+                           {displayText}
+                       </span>
+                   )
+               }
+
+               return (
+                <span 
+                  key={idx} 
+                  id={`highlight-${part.riskId}`}
+                  ref={el => highlightRefs.current[part.riskId!] = el}
+                  onClick={() => handleSelectRisk(part.riskId!)}
+                  className={`cursor-pointer border-b-2 transition-colors duration-200 scroll-mt-32 ${
+                    selectedRiskId === part.riskId ? 'bg-blue-600 text-white border-blue-800 px-1 rounded shadow-sm' :
+                    part.level === RiskLevel.HIGH ? 'bg-red-50 border-red-500 hover:bg-red-100' : 
+                    part.level === RiskLevel.MEDIUM ? 'bg-orange-50 border-orange-500 hover:bg-orange-100' : 
+                    'bg-yellow-50 border-yellow-500 hover:bg-yellow-100'
+                  }`}
+                >
+                  {displayText}
+                </span>
+              );
+           } 
+           
+           return <span key={idx}>{displayText}</span>;
         })}
       </div>
     );
