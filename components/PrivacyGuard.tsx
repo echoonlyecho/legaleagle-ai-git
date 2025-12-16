@@ -70,7 +70,8 @@ const REGEX_PATTERNS = [
 export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onComplete, onSkip }) => {
     // Selection State
     const [manualRules, setManualRules] = useState<ManualRule[]>([]);
-    const [activeRegexes, setActiveRegexes] = useState<Set<string>>(new Set(['money', 'company', 'email', 'date', 'phone', 'bank']));
+    // Default active regexes: REMOVED 'company' by default as per user request to avoid auto-replacement of specific companies
+    const [activeRegexes, setActiveRegexes] = useState<Set<string>>(new Set(['money', 'email', 'date', 'phone', 'bank']));
     
     // UI State
     const [selection, setSelection] = useState<string>('');

@@ -196,6 +196,19 @@ const App: React.FC = () => {
           setCurrentPage(Page.REVIEW);
       }
   };
+  
+  // Navigation handler for Back button in Review
+  const handleReviewBack = () => {
+      if (historySession) {
+          // If viewing history, go back to history list
+          setActiveContract(null);
+          setHistorySession(null);
+          setCurrentPage(Page.HISTORY);
+      } else {
+          // If in active flow, go back to Privacy Guard
+          setCurrentPage(Page.PRIVACY_GUARD);
+      }
+  };
 
   const renderContent = () => {
     if (currentPage === Page.PRIVACY_GUARD && activeContract) {
@@ -215,18 +228,18 @@ const App: React.FC = () => {
             initialSession={historySession}
             privacyData={privacyData}
             onSaveSession={saveSession}
-            onBack={() => { setActiveContract(null); setCurrentPage(Page.DASHBOARD); }} 
+            onBack={handleReviewBack} 
         />
       );
     }
     
     if (currentPage === Page.HISTORY) {
         return (
-            <div className="p-8 max-w-5xl mx-auto">
+            <div className="p-8 max-w-5xl mx-auto w-full">
                 <div className="mb-8">
                     <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
                         <History className="w-6 h-6 text-blue-600" />
-                        历史档案
+                        审查历史
                     </h2>
                     <p className="text-gray-500 mt-1">查看之前的合同审查记录。</p>
                 </div>
@@ -269,7 +282,7 @@ const App: React.FC = () => {
       case Page.DASHBOARD:
       default:
         return (
-          <div className="p-8 max-w-6xl mx-auto">
+          <div className="p-8 max-w-6xl mx-auto w-full">
             <div className="mb-12 text-center">
               <h1 className="text-4xl font-extrabold text-slate-900 mb-4 tracking-tight">
                 AI 智能合同审查平台
@@ -326,7 +339,7 @@ const App: React.FC = () => {
                 </div>
                  <div onClick={() => setCurrentPage(Page.HISTORY)} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md cursor-pointer transition-all">
                     <History className="w-6 h-6 text-slate-700 mb-4" />
-                    <h4 className="font-semibold text-lg mb-1">历史档案</h4>
+                    <h4 className="font-semibold text-lg mb-1">审查历史</h4>
                     <p className="text-sm text-gray-500">查看已审查合同的历史记录。</p>
                 </div>
             </div>
@@ -336,7 +349,7 @@ const App: React.FC = () => {
   };
 
   // Determine if the current page handles its own scrolling (Application-like view)
-  const isAppView = currentPage === Page.PRIVACY_GUARD || currentPage === Page.REVIEW;
+  const isAppView = currentPage === Page.PRIVACY_GUARD || currentPage === Page.REVIEW || currentPage === Page.DRAFT;
 
   return (
     // Changed: h-screen and overflow-hidden to create a fixed viewport application shell
@@ -424,7 +437,7 @@ const App: React.FC = () => {
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentPage === Page.HISTORY ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'}`}
           >
             <History className="w-5 h-5" />
-            历史档案
+            审查历史
           </button>
         </nav>
 
@@ -435,7 +448,7 @@ const App: React.FC = () => {
       </aside>
 
       {/* Main Content - Conditionally apply overflow logic */}
-      <main className={`flex-1 flex flex-col ${isAppView ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+      <main className={`flex-1 flex flex-col ${isAppView ? 'overflow-hidden' : 'overflow-y-auto w-full'}`}>
         {renderContent()}
       </main>
     </div>
