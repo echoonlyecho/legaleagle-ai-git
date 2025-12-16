@@ -28,9 +28,10 @@ const REGEX_PATTERNS = [
     { 
         id: 'company',
         label: '公司名称 (Company)',
-        // Matches typical company names ending in specific suffixes, allowing for brackets (full/half width)
-        // E.g. 环球时报在线（北京）文化传播有限公司
-        regex: /[\u4e00-\u9fa5a-zA-Z0-9（）()]{2,50}(?:有限公司|责任公司|集团|分公司|Co\.,\s?Ltd|Inc\.|Corp\.)/g,
+        // Matches typical company names ending in specific suffixes
+        // Support full-width brackets （）, half-width brackets (), and spaces inside the name
+        // Example: 环球时报在线（北京）文化传播有限公司
+        regex: /[\u4e00-\u9fa5a-zA-Z0-9（）()\s]{2,50}(?:有限公司|责任公司|集团|分公司|Co\.,\s?Ltd|Inc\.|Corp\.)/g,
         prefix: '[COMPANY_'
     },
     { 
@@ -58,8 +59,10 @@ const REGEX_PATTERNS = [
     { 
         id: 'bank',
         label: '银行卡号 (Bank Card)', 
-        // 12 to 30 digits to cover various account types, allowing spaces/dashes
-        regex: /(?:\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{0,10}\b)|(?:\b\d{12,30}\b)/g, 
+        // 12 to 30 digits. 
+        // Uses \b for standard numbers, but allows non-boundary matches for long continuous digits 
+        // to catch cases like ID331156037195 where \b would fail after 'D'.
+        regex: /(?:\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{0,10}\b)|(?:\d{12,30})/g, 
         prefix: '[BANK_' 
     }
 ];
@@ -375,8 +378,8 @@ export const PrivacyGuard: React.FC<PrivacyGuardProps> = ({ originalContent, onC
                         )}
                     </div>
                     
-                    {/* Stats Footer */}
-                    <div className="p-4 bg-white border-t border-gray-200 text-xs text-gray-500 flex justify-between">
+                    {/* Stats Footer - Added shrink-0 to prevent it from disappearing */}
+                    <div className="p-4 bg-white border-t border-gray-200 text-xs text-gray-500 flex justify-between shrink-0">
                          <span>已掩盖敏感词:</span>
                          <span className="font-bold text-gray-800">{Object.keys(computedData.map).length} 处</span>
                     </div>

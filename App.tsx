@@ -65,8 +65,19 @@ const App: React.FC = () => {
 
   const onFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.[0]) {
-        setPendingFile(e.target.files[0]);
-        setShowUploadGuide(true);
+        const file = e.target.files[0];
+        
+        // Only show guide for Word documents
+        const isWord = file.name.endsWith('.docx') || file.name.endsWith('.doc');
+        
+        if (isWord) {
+            setPendingFile(file);
+            setShowUploadGuide(true);
+        } else {
+            // Directly process other formats
+            processFile(file);
+        }
+        
         // Clear input value so same file can be selected again if needed
         e.target.value = ''; 
     }
@@ -106,7 +117,7 @@ const App: React.FC = () => {
         setIsProcessing(false);
       };
 
-      if (file.name.endsWith('.docx')) {
+      if (file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
         reader.onload = async (event) => {
           try {
             const arrayBuffer = event.target?.result as ArrayBuffer;
@@ -139,10 +150,19 @@ const App: React.FC = () => {
         };
         reader.readAsText(file);
       } else {
+         // Default to text processing for unknown types, or PDF placeholder
          setTimeout(() => {
-             alert("PDF 解析暂不支持纯前端模式，已加载演示文本用于体验。");
-             processContent(DEMO_CONTRACT_TEXT);
-         }, 1000);
+             // For PDF or others not explicitly handled in frontend demo
+             if (file.type.includes('pdf')) {
+                alert("PDF 解析暂不支持纯前端模式，已加载演示文本用于体验。");
+                processContent(DEMO_CONTRACT_TEXT);
+             } else {
+                 // Try reading as text fallback
+                 const textReader = new FileReader();
+                 textReader.onload = (e) => processContent(e.target?.result as string);
+                 textReader.readAsText(file);
+             }
+         }, 500);
       }
   };
 
@@ -274,7 +294,7 @@ const App: React.FC = () => {
                     {isProcessing ? <Loader2 className="w-8 h-8 text-blue-600 animate-spin" /> : <UploadCloud className="w-8 h-8 text-blue-600" />}
                   </div>
                   <h3 className="text-xl font-bold text-slate-800 mb-2 z-0">{isProcessing ? '正在解析...' : '上传合同审查'}</h3>
-                  <p className="text-slate-500 mb-6 z-0">支持 Word, Markdown, TXT 格式</p>
+                  <p className="text-slate-500 mb-6 z-0">支持 .txt, .md, .pdf, .docx <span className="text-xs text-orange-500">(Word排版可能不完整)</span></p>
                   <button className="bg-blue-600 text-white px-6 py-2 rounded-full font-medium hover:bg-blue-700 transition-colors z-0">
                     选择文件
                   </button>
