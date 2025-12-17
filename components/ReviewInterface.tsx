@@ -120,6 +120,8 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
               return '阿里云通义千问，中文语境理解更优。';
           case ModelProvider.KIMI:
               return 'Moonshot Kimi，擅长长文本分析与上下文理解。';
+          case ModelProvider.DOUBAO:
+              return '字节跳动豆包，响应速度快，性价比高。';
           default:
               return '';
       }
@@ -169,12 +171,11 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
   };
 
   const handleNavigationBack = () => {
-    // If in active session (not history) and analysis results exist, confirm return to config
+    // If in active session (not history) and analysis results exist, return to config
     if (risks.length > 0 && !initialSession) {
-        if (window.confirm('返回配置页面将清除当前分析结果，是否继续？')) {
-            setRisks([]);
-            setHistory([]);
-        }
+        // Direct return to config without confirmation for better UX (Quick re-review)
+        setRisks([]);
+        setHistory([]);
     } else {
         // Standard back behavior (e.g. back to history list or previous page)
         onBack();
@@ -513,23 +514,21 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                     </p>
                   </div>
 
-                  {modelProvider !== ModelProvider.GEMINI && (
-                      <div className="animate-in fade-in slide-in-from-top-2">
-                        <label className="block text-sm font-bold text-gray-700 mb-2">
-                            API Key
-                        </label>
-                        <div className="relative">
-                            <input 
-                                type="password"
-                                value={apiKey}
-                                onChange={(e) => setApiKey(e.target.value)}
-                                placeholder="选填，为空则使用内置 Key"
-                                className="w-full p-3 pl-10 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                            <Key className="w-4 h-4 text-gray-500 absolute left-3 top-3.5" />
-                        </div>
-                      </div>
-                  )}
+                  <div className="animate-in fade-in slide-in-from-top-2">
+                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                        API Key
+                    </label>
+                    <div className="relative">
+                        <input 
+                            type="password"
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            placeholder={modelProvider === ModelProvider.GEMINI ? "选填，为空则使用内置 Key" : "必填"}
+                            className="w-full p-3 pl-10 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                        <Key className="w-4 h-4 text-gray-500 absolute left-3 top-3.5" />
+                    </div>
+                  </div>
 
                   <div>
                     <label className="block text-sm font-bold text-gray-700 mb-2">我方立场</label>

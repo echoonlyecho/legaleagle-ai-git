@@ -107,8 +107,7 @@ export const ContractDrafting: React.FC = () => {
                     </div>
                 </div>
 
-                {modelProvider !== ModelProvider.GEMINI && (
-                  <div className="mb-4 animate-in fade-in slide-in-from-top-2">
+                <div className="mb-4 animate-in fade-in slide-in-from-top-2">
                     <label className="block text-sm font-bold text-gray-700 mb-2">
                         API Key
                     </label>
@@ -117,13 +116,12 @@ export const ContractDrafting: React.FC = () => {
                             type="password"
                             value={apiKey}
                             onChange={(e) => setApiKey(e.target.value)}
-                            placeholder="选填，为空则使用内置 Key"
+                            placeholder={modelProvider === ModelProvider.GEMINI ? "选填，为空则使用内置 Key" : "必填"}
                             className="w-full p-2.5 pl-9 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
                         />
                         <Key className="w-4 h-4 text-gray-500 absolute left-3 top-3" />
                     </div>
-                  </div>
-                )}
+                </div>
 
                 <div className="mb-6">
                     <label className="block text-sm font-bold text-gray-700 mb-2">合同类型</label>

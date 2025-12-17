@@ -19,12 +19,14 @@ const QWEN_DEFAULT_API_KEY = "sk-48d1263fb12944c5a307f090e2f66b10";
 const QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 
 // Moonshot Kimi Configuration
-// Updated with user provided key
 const MOONSHOT_DEFAULT_API_KEY = "sk-Jl6AirNkcsXrpYnoik02cB2KfwWDJydLibTZadz6tV3lcnQq";
 const MOONSHOT_BASE_URL = "https://api.moonshot.cn/v1/chat/completions";
 const MOONSHOT_MODEL = "kimi-k2-turbo-preview"; 
 
-const ai = new GoogleGenAI({ apiKey: getGeminiApiKey() });
+// ByteDance Doubao Configuration
+const DOUBAO_DEFAULT_API_KEY = "b54a4f81-1920-4dca-af41-44d951e86d46";
+const DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+const DOUBAO_MODEL = "doubao-seed-1-6-lite-251015";
 
 // --- Helpers ---
 
@@ -77,7 +79,6 @@ const callMoonshotAI = async (messages: any[], apiKey?: string, jsonMode: boolea
             body: JSON.stringify({
                 model: MOONSHOT_MODEL,
                 messages: messages,
-                // Attempt to use json_object if supported, otherwise rely on prompt
                 response_format: jsonMode ? { type: "json_object" } : undefined,
                 temperature: 0.3
             })
@@ -95,6 +96,43 @@ const callMoonshotAI = async (messages: any[], apiKey?: string, jsonMode: boolea
         throw error;
     }
 };
+
+// Doubao API Call Helper
+const callDoubaoAI = async (messages: any[], apiKey?: string, jsonMode: boolean = false): Promise<string> => {
+    const key = apiKey || DOUBAO_DEFAULT_API_KEY;
+
+    if (!key) {
+        throw new Error("Missing Doubao API Key");
+    }
+
+    try {
+        const response = await fetch(DOUBAO_BASE_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${key}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: DOUBAO_MODEL,
+                messages: messages,
+                // Doubao API supports standard OpenAI format
+                // Note: strict json_object enforcement might vary, relying on prompt instruction is often safer
+                temperature: 0.3
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.text();
+            throw new Error(`Doubao API Error: ${err}`);
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "";
+    } catch (error) {
+        console.error("Call to Doubao failed:", error);
+        throw error;
+    }
+}
 
 // Parse JSON from potentially Markdown-wrapped string
 const safeJsonParse = (text: string, defaultVal: any) => {
@@ -175,6 +213,15 @@ export const generateContractSummary = async (text: string, provider: ModelProvi
       }
   }
 
+  if (provider === ModelProvider.DOUBAO) {
+      try {
+          const content = await callDoubaoAI([systemMessage, userMessage], apiKey, true);
+          return safeJsonParse(content, getUnknownSummary("Could not analyze text (Doubao)."));
+      } catch (e) {
+          return getUnknownSummary("Error calling Doubao API.");
+      }
+  }
+
   // Default: Gemini
   const schema: any = {
     type: Type.OBJECT,
@@ -189,6 +236,9 @@ export const generateContractSummary = async (text: string, provider: ModelProvi
   };
 
   try {
+    const finalApiKey = apiKey || getGeminiApiKey();
+    const ai = new GoogleGenAI({ apiKey: finalApiKey });
+
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: promptText,
@@ -240,8 +290,8 @@ export const analyzeContractRisks = async (
     "${text}"
   `;
 
-  // --- External Providers (Qwen / Kimi) ---
-  if (provider === ModelProvider.QWEN || provider === ModelProvider.KIMI) {
+  // --- External Providers (Qwen / Kimi / Doubao) ---
+  if (provider === ModelProvider.QWEN || provider === ModelProvider.KIMI || provider === ModelProvider.DOUBAO) {
       const messages = [
           { role: "system", content: systemPrompt + " Respond ONLY with a JSON array." },
           { role: "user", content: userPrompt }
@@ -249,23 +299,27 @@ export const analyzeContractRisks = async (
 
       try {
         let content = "";
+        let providerPrefix = "";
+        
         if (provider === ModelProvider.QWEN) {
             content = await callQwenAI(messages, apiKey, true);
-        } else {
+            providerPrefix = 'qwen';
+        } else if (provider === ModelProvider.KIMI) {
             content = await callMoonshotAI(messages, apiKey, true);
+            providerPrefix = 'kimi';
+        } else if (provider === ModelProvider.DOUBAO) {
+            content = await callDoubaoAI(messages, apiKey, true);
+            providerPrefix = 'doubao';
         }
         
         let rawRisks = safeJsonParse(content, []);
         
         // --- SAFETY CHECK: Ensure result is an Array ---
-        // Kimi/Qwen sometimes return a single object OR { "result": [...] } even if asked for array.
         if (!Array.isArray(rawRisks)) {
             if (rawRisks && typeof rawRisks === 'object') {
-                // Case 1: The response is a single Risk object (has keys like originalText or riskDescription)
                 if (rawRisks.originalText || rawRisks.riskDescription || rawRisks.reason) {
                     rawRisks = [rawRisks];
                 }
-                // Case 2: The response is a wrapper object like { risks: [...] }
                 else {
                     const values = Object.values(rawRisks);
                     const foundArray = values.find(v => Array.isArray(v));
@@ -273,7 +327,7 @@ export const analyzeContractRisks = async (
                         rawRisks = foundArray;
                     } else {
                         console.warn("Parsed object but found no array or risk data:", rawRisks);
-                        rawRisks = []; // Fallback to empty to prevent crash
+                        rawRisks = []; 
                     }
                 }
             } else {
@@ -282,12 +336,10 @@ export const analyzeContractRisks = async (
             }
         }
 
-        const providerPrefix = provider === ModelProvider.QWEN ? 'qwen' : 'kimi';
         // Now safe to map
         return rawRisks.map((r: any, index: number) => ({ ...r, id: `risk-${providerPrefix}-${index}-${Date.now()}`, isAddressed: false }));
       } catch (e) {
         console.error(`${provider} Analysis Failed`, e);
-        // Re-throw to show in UI
         throw e;
       }
   }
@@ -309,6 +361,9 @@ export const analyzeContractRisks = async (
   };
 
   try {
+    const finalApiKey = apiKey || getGeminiApiKey();
+    const ai = new GoogleGenAI({ apiKey: finalApiKey });
+
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash', 
       contents: systemPrompt + "\n" + userPrompt,
@@ -357,7 +412,18 @@ export const draftNewContract = async (type: string, requirements: string, provi
       }
   }
 
+  if (provider === ModelProvider.DOUBAO) {
+      try {
+          return await callDoubaoAI(messages, apiKey);
+      } catch (e) {
+          return `Error drafting contract with Doubao: ${e instanceof Error ? e.message : 'Unknown error'}`;
+      }
+  }
+
   try {
+    const finalApiKey = apiKey || getGeminiApiKey();
+    const ai = new GoogleGenAI({ apiKey: finalApiKey });
+
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
