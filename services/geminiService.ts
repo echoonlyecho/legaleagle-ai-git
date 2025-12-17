@@ -18,6 +18,12 @@ const getGeminiApiKey = () => {
 const QWEN_API_KEY = "sk-48d1263fb12944c5a307f090e2f66b10";
 const QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 
+// Moonshot Kimi Configuration
+const MOONSHOT_API_KEY = "sk-c7f7632617754388b394179352601977";
+const MOONSHOT_BASE_URL = "https://api.moonshot.cn/v1/chat/completions";
+// Using the specific preview model as requested
+const MOONSHOT_MODEL = "kimi-k2-0905-preview"; 
+
 const ai = new GoogleGenAI({ apiKey: getGeminiApiKey() });
 
 // --- Helpers ---
@@ -52,6 +58,37 @@ const callQwenAI = async (messages: any[], jsonMode: boolean = false): Promise<s
     }
 };
 
+// Moonshot API Call Helper
+const callMoonshotAI = async (messages: any[], jsonMode: boolean = false): Promise<string> => {
+    try {
+        const response = await fetch(MOONSHOT_BASE_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${MOONSHOT_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: MOONSHOT_MODEL,
+                messages: messages,
+                // Attempt to use json_object if supported, otherwise rely on prompt
+                response_format: jsonMode ? { type: "json_object" } : undefined,
+                temperature: 0.3
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.text();
+            throw new Error(`Moonshot API Error: ${err}`);
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "";
+    } catch (error) {
+        console.error("Call to Moonshot failed:", error);
+        throw error;
+    }
+};
+
 // Parse JSON from potentially Markdown-wrapped string
 const safeJsonParse = (text: string, defaultVal: any) => {
     try {
@@ -74,27 +111,24 @@ export const generateContractSummary = async (text: string, provider: ModelProvi
     Text: "${text.substring(0, 10000)}..."
   `;
 
+  const systemMessage = { role: "system", content: "You are a legal assistant. Respond in pure JSON." };
+  const userMessage = { role: "user", content: promptText };
+
   if (provider === ModelProvider.QWEN) {
       try {
-          const content = await callQwenAI([
-              { role: "system", content: "You are a legal assistant. Respond in pure JSON." },
-              { role: "user", content: promptText }
-          ], true);
-          return safeJsonParse(content, {
-              type: "Unknown",
-              parties: [],
-              amount: "Unknown",
-              duration: "Unknown",
-              mainSubject: "Could not analyze text (Qwen)."
-          });
+          const content = await callQwenAI([systemMessage, userMessage], true);
+          return safeJsonParse(content, getUnknownSummary("Could not analyze text (Qwen)."));
       } catch (e) {
-          return {
-              type: "Unknown",
-              parties: [],
-              amount: "Unknown",
-              duration: "Unknown",
-              mainSubject: "Error calling Qwen API."
-          };
+          return getUnknownSummary("Error calling Qwen API.");
+      }
+  }
+
+  if (provider === ModelProvider.KIMI) {
+      try {
+          const content = await callMoonshotAI([systemMessage, userMessage], true);
+          return safeJsonParse(content, getUnknownSummary("Could not analyze text (Kimi)."));
+      } catch (e) {
+          return getUnknownSummary("Error calling Moonshot API.");
       }
   }
 
@@ -125,15 +159,17 @@ export const generateContractSummary = async (text: string, provider: ModelProvi
     return json as ContractSummary;
   } catch (error) {
     console.error("Summary generation failed:", error);
-    return {
-      type: "Unknown",
-      parties: [],
-      amount: "Unknown",
-      duration: "Unknown",
-      mainSubject: "Could not analyze text."
-    };
+    return getUnknownSummary("Could not analyze text.");
   }
 };
+
+const getUnknownSummary = (reason: string): ContractSummary => ({
+    type: "Unknown",
+    parties: [],
+    amount: "Unknown",
+    duration: "Unknown",
+    mainSubject: reason
+});
 
 export const analyzeContractRisks = async (
   text: string, 
@@ -160,18 +196,26 @@ export const analyzeContractRisks = async (
     "${text}"
   `;
 
-  // --- QWEN Implementation ---
-  if (provider === ModelProvider.QWEN) {
+  // --- External Providers (Qwen / Kimi) ---
+  if (provider === ModelProvider.QWEN || provider === ModelProvider.KIMI) {
+      const messages = [
+          { role: "system", content: systemPrompt + " Respond ONLY with a JSON array." },
+          { role: "user", content: userPrompt }
+      ];
+
       try {
-        const content = await callQwenAI([
-            { role: "system", content: systemPrompt + " Respond ONLY with a JSON array." },
-            { role: "user", content: userPrompt }
-        ], true);
+        let content = "";
+        if (provider === ModelProvider.QWEN) {
+            content = await callQwenAI(messages, true);
+        } else {
+            content = await callMoonshotAI(messages, true);
+        }
         
         const rawRisks = safeJsonParse(content, []);
-        return rawRisks.map((r: any, index: number) => ({ ...r, id: `risk-qwen-${index}-${Date.now()}`, isAddressed: false }));
+        const providerPrefix = provider === ModelProvider.QWEN ? 'qwen' : 'kimi';
+        return rawRisks.map((r: any, index: number) => ({ ...r, id: `risk-${providerPrefix}-${index}-${Date.now()}`, isAddressed: false }));
       } catch (e) {
-        console.error("Qwen Analysis Failed", e);
+        console.error(`${provider} Analysis Failed`, e);
         return [];
       }
   }
@@ -219,15 +263,25 @@ export const draftNewContract = async (type: string, requirements: string, provi
     
     Return only the contract text in Markdown format.
   `;
+  
+  const messages = [
+      { role: "system", content: "You are an expert legal drafter." },
+      { role: "user", content: prompt }
+  ];
 
   if (provider === ModelProvider.QWEN) {
       try {
-          return await callQwenAI([
-              { role: "system", content: "You are an expert legal drafter." },
-              { role: "user", content: prompt }
-          ]);
+          return await callQwenAI(messages);
       } catch (e) {
           return "Error drafting contract with Qwen.";
+      }
+  }
+
+  if (provider === ModelProvider.KIMI) {
+      try {
+          return await callMoonshotAI(messages);
+      } catch (e) {
+          return "Error drafting contract with Kimi (Moonshot).";
       }
   }
 

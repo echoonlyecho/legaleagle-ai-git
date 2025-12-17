@@ -19,7 +19,8 @@ export enum ReviewStrictness {
 
 export enum ModelProvider {
   GEMINI = 'Google Gemini 2.5',
-  QWEN = 'Alibaba Qwen Plus (通义千问)'
+  QWEN = 'Alibaba Qwen Plus (通义千问)',
+  KIMI = 'Moonshot Kimi (月之暗面)'
 }
 
 export interface ContractSummary {

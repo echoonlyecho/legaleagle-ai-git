@@ -61,9 +61,7 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
         setSummary(null);
         setSelectedRiskId(null);
         
-        // Initial summary fetching (using Gemini as default for speed on load, or can be lazy)
-        // We will skip auto-fetch here and let user click start to use their selected model,
-        // OR just fetch with default to populate header. Let's fetch with default.
+        // Initial summary fetching (using Gemini as default for speed on load)
         const fetchSummary = async () => {
           const sum = await generateContractSummary(privacyData?.maskedContent || contract.content, ModelProvider.GEMINI);
           setSummary(sum);
@@ -117,14 +115,25 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
       return result;
   };
 
+  const getModelDescription = (provider: ModelProvider) => {
+      switch (provider) {
+          case ModelProvider.GEMINI:
+              return 'Google 最新的多模态大模型，逻辑推理能力强。';
+          case ModelProvider.QWEN:
+              return '阿里云通义千问，中文语境理解更优。';
+          case ModelProvider.KIMI:
+              return 'Moonshot Kimi，擅长长文本分析与上下文理解。';
+          default:
+              return '';
+      }
+  };
+
   const handleAnalyze = async () => {
     setLoading(true);
     setLoadingStep(`正在调用 ${modelProvider.split(' ')[0]} 分析合同条款...`);
     const rulesContext = "Standard commercial contract rules, focus on liability caps and payment terms."; 
     
     try {
-      // Re-fetch summary with selected model if needed, but usually summary is fine.
-      // We focus on Risk Analysis with the selected model.
       const identifiedRisks = await analyzeContractRisks(currentText, stance, strictness, rulesContext, modelProvider);
       
       // Sort risks by their position in the text initially
@@ -156,7 +165,6 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
 
   const handleSelectRisk = (riskId: string) => {
     setSelectedRiskId(riskId);
-    // Note: Scroll handled by useEffect, but we keep this manual check as backup
     setTimeout(() => {
         const el = highlightRefs.current[riskId];
         if (el) {
@@ -327,8 +335,6 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
     }
 
     // Sort segments by their position in the current text to ensure correct splitting order
-    // Note: If originalText is gone (replaced), indexOf will be -1, effectively filtering it out if we check.
-    // However, since we just replaced original with suggested, the active risks shouldn't overlap with the animating one unless there are duplicates.
     const sortedSegments = segmentsToHighlight
         .filter(s => currentText.indexOf(s.matchText) !== -1)
         .sort((a, b) => currentText.indexOf(a.matchText) - currentText.indexOf(b.matchText));
@@ -522,7 +528,7 @@ export const ReviewInterface: React.FC<ReviewInterfaceProps> = ({ contract, init
                         <Cpu className="w-4 h-4 text-gray-500 absolute left-3 top-3.5" />
                     </div>
                     <p className="text-xs text-gray-400 mt-1 ml-1">
-                        {modelProvider === ModelProvider.GEMINI ? 'Google 最新的多模态大模型，逻辑推理能力强。' : '阿里云通义千问，中文语境理解更优。'}
+                        {getModelDescription(modelProvider)}
                     </p>
                   </div>
 
