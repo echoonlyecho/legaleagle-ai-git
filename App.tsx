@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
-import { UploadCloud, FileText, Settings, ShieldCheck, PenTool, Layout, Loader2, History, Clock, FileWarning, ArrowRight, BookOpen } from 'lucide-react';
+import { UploadCloud, FileText, Settings, ShieldCheck, PenTool, Layout, Loader2, History, Clock, FileWarning, ArrowRight, BookOpen, GitCompare } from 'lucide-react';
 import { ReviewInterface } from './components/ReviewInterface';
 import { KnowledgeBase } from './components/KnowledgeBase';
 import { ContractDrafting } from './components/ContractDrafting';
 import { PrivacyGuard } from './components/PrivacyGuard';
+import { ContractComparison } from './components/ContractComparison';
 import { ContractData, ReviewSession, PrivacySessionData, MaskingMap, KnowledgeRule, RiskLevel, SensitiveWord } from './types';
 
 const DEMO_CONTRACT_TEXT = `CONTRACT FOR SERVICES
@@ -35,7 +36,8 @@ enum Page {
   REVIEW = 'REVIEW',
   DRAFT = 'DRAFT',
   KNOWLEDGE = 'KNOWLEDGE',
-  HISTORY = 'HISTORY'
+  HISTORY = 'HISTORY',
+  COMPARE = 'COMPARE'
 }
 
 const App: React.FC = () => {
@@ -92,7 +94,9 @@ const App: React.FC = () => {
     if (e.target.files?.[0]) {
         const file = e.target.files[0];
         const isWord = file.name.endsWith('.docx') || file.name.endsWith('.doc');
-        if (isWord) {
+        const isPdf = file.name.endsWith('.pdf');
+        
+        if (isWord || isPdf) {
             setPendingFile(file);
             setShowUploadGuide(true);
         } else {
@@ -132,7 +136,33 @@ const App: React.FC = () => {
         setIsProcessing(false);
       };
 
-      if (file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
+      if (file.name.endsWith('.pdf')) {
+        reader.onload = async (event) => {
+          try {
+            const arrayBuffer = event.target?.result as ArrayBuffer;
+            const pdfjsLib = (window as any).pdfjsLib || (window as any)['pdfjs-dist/build/pdf'];
+            if (!pdfjsLib) throw new Error("PDF.js library not loaded");
+            
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            
+            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+            const pdf = await loadingTask.promise;
+            let fullText = '';
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const textContent = await page.getTextContent();
+              const pageText = textContent.items.map((item: any) => item.str).join(' ');
+              fullText += pageText + '\n';
+            }
+            processContent(fullText);
+          } catch (error) {
+            console.error("PDF parsing error:", error);
+            alert("PDF 解析失败，请尝试上传 Word 或文本格式。");
+            setIsProcessing(false);
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      } else if (file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
         reader.onload = async (event) => {
           try {
             const arrayBuffer = event.target?.result as ArrayBuffer;
@@ -203,6 +233,8 @@ const App: React.FC = () => {
         return <KnowledgeBase rules={knowledgeRules} onUpdateRules={updateKnowledgeRules} />;
       case Page.DRAFT:
         return <ContractDrafting />;
+      case Page.COMPARE:
+        return <ContractComparison />;
       case Page.HISTORY:
         return (
             <div className="p-8 max-w-5xl mx-auto w-full">
@@ -231,8 +263,9 @@ const App: React.FC = () => {
                <div className="bg-white rounded-2xl p-8 shadow-xl border border-slate-100 flex flex-col items-center justify-center text-center group hover:border-blue-400 transition-all cursor-pointer relative overflow-hidden">
                   <input type="file" className="absolute inset-0 opacity-0 cursor-pointer z-10" onChange={onFileSelect} accept=".txt,.md,.doc,.docx,.pdf" disabled={isProcessing} />
                   <div className="bg-blue-100 p-4 rounded-full mb-6">{isProcessing ? <Loader2 className="w-8 h-8 text-blue-600 animate-spin" /> : <UploadCloud className="w-8 h-8 text-blue-600" />}</div>
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">上传合同审查</h3>
-                  <button className="bg-blue-600 text-white px-6 py-2 rounded-full font-medium mt-4">选择文件</button>
+                  <h3 className="text-xl font-bold text-slate-800 mb-1">上传合同审查</h3>
+                  <p className="text-xs text-slate-400 mb-2">支持 .txt, .md, .doc, .docx, .pdf</p>
+                  <button className="bg-blue-600 text-white px-6 py-2 rounded-full font-medium">选择文件</button>
                </div>
                <div onClick={useDemoContract} className="bg-white rounded-2xl p-8 shadow-xl border border-slate-100 flex flex-col items-center justify-center text-center group hover:border-purple-400 transition-all cursor-pointer">
                    <div className="bg-purple-100 p-4 rounded-full mb-6"><ShieldCheck className="w-8 h-8 text-purple-600" /></div>
@@ -240,8 +273,9 @@ const App: React.FC = () => {
                    <button className="text-purple-600 font-medium mt-4">立即尝试 &rarr;</button>
                </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div onClick={() => setCurrentPage(Page.DRAFT)} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md cursor-pointer transition-all"><PenTool className="w-6 h-6 text-slate-700 mb-4" /><h4 className="font-semibold text-lg mb-1">智能起草</h4></div>
+                <div onClick={() => setCurrentPage(Page.COMPARE)} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md cursor-pointer transition-all"><GitCompare className="w-6 h-6 text-slate-700 mb-4" /><h4 className="font-semibold text-lg mb-1">合同对比</h4></div>
                 <div onClick={() => setCurrentPage(Page.KNOWLEDGE)} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md cursor-pointer transition-all"><BookOpen className="w-6 h-6 text-slate-700 mb-4" /><h4 className="font-semibold text-lg mb-1">知识库管理</h4></div>
                 <div onClick={() => setCurrentPage(Page.HISTORY)} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md cursor-pointer transition-all"><History className="w-6 h-6 text-slate-700 mb-4" /><h4 className="font-semibold text-lg mb-1">审查历史</h4></div>
             </div>
@@ -257,7 +291,7 @@ const App: React.FC = () => {
               <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
                   <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mb-4"><FileWarning className="w-6 h-6 text-yellow-600" /></div>
                   <h3 className="text-xl font-bold text-gray-900 mb-2">上传确认</h3>
-                  <p className="text-sm text-gray-600 mb-6">解析 Word 可能丢失排版，建议仅用于内容审查。</p>
+                  <p className="text-sm text-gray-600 mb-6">解析文档可能丢失排版，建议仅用于内容审查。</p>
                   <div className="flex gap-3 justify-end"><button onClick={cancelUpload} className="px-4 py-2 text-gray-600">取消</button><button onClick={confirmUpload} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold">确认</button></div>
               </div>
           </div>
@@ -267,6 +301,7 @@ const App: React.FC = () => {
         <nav className="flex-1 p-4 space-y-2">
           <button onClick={() => { setActiveContract(null); setCurrentPage(Page.DASHBOARD); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${currentPage === Page.DASHBOARD ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'}`}><Layout className="w-5 h-5" />工作台</button>
           <button onClick={() => setCurrentPage(Page.DRAFT)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${currentPage === Page.DRAFT ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'}`}><PenTool className="w-5 h-5" />合同起草</button>
+          <button onClick={() => setCurrentPage(Page.COMPARE)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${currentPage === Page.COMPARE ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'}`}><GitCompare className="w-5 h-5" />合同对比</button>
           <button onClick={() => setCurrentPage(Page.KNOWLEDGE)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${currentPage === Page.KNOWLEDGE ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'}`}><BookOpen className="w-5 h-5" />知识库</button>
           <button onClick={() => setCurrentPage(Page.HISTORY)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${currentPage === Page.HISTORY ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'}`}><History className="w-5 h-5" />审查历史</button>
         </nav>
